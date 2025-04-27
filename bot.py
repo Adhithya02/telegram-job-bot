@@ -3,7 +3,7 @@ from telegram import Bot
 from telegram.ext import Updater, CommandHandler, CallbackContext
 
 TOKEN = '7788581404:AAF2a7p7m8ZGd6tc5DNIj9VJ9saXmTZMJdc'  # Replace with your bot token
-CHAT_ID = 'Adhithya_02'  # Replace with your Telegram user ID
+CHAT_ID = 'https://t.me/Adhithya_02'  # Replace with your Telegram user ID
 
 # GitHub Jobs API endpoint
 GITHUB_JOBS_API_URL = "https://jobs.github.com/positions.json"
