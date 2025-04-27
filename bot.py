@@ -1,7 +1,7 @@
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters
 
 # Replace 'your-telegram-bot-token' with your actual bot token
-TOKEN = 'your-telegram-bot-token'
+TOKEN = '7788581404:AAF2a7p7m8ZGd6tc5DNIj9VJ9saXmTZMJdc'
 
 # Function to handle the /start command
 def start(update, context):
