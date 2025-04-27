@@ -13,8 +13,8 @@ logging.basicConfig(
     level=logging.INFO
 )
 
-# === Function to search jobs ===
-def search_jobs(query="Software Developer", location="Remote"):
+# === Async Function to search jobs ===
+async def search_jobs(query="Software Developer", location="Remote"):
     url = "https://serpapi.com/search.json"
     params = {
         "engine": "google_jobs",
@@ -22,23 +22,26 @@ def search_jobs(query="Software Developer", location="Remote"):
         "location": location,
         "api_key": SERP_API_KEY
     }
-    response = requests.get(url, params=params)
-    data = response.json()
-    
-    job_listings = data.get('jobs_results', [])
-    results = []
-    for job in job_listings[:5]:  # Limit to first 5 results
-        title = job.get('title', 'No Title')
-        company = job.get('company_name', 'No Company')
-        link = job.get('related_links', [{}])[0].get('link', 'No Link')
-        results.append(f"📌 *{title}* at *{company}*\n🔗 [Apply Here]({link})")
-    return results if results else ["No jobs found!"]
+    try:
+        response = requests.get(url, params=params, timeout=10)
+        data = response.json()
+        
+        job_listings = data.get('jobs_results', [])
+        results = []
+        for job in job_listings[:5]:  # Top 5 results
+            title = job.get('title', 'No Title')
+            company = job.get('company_name', 'No Company')
+            link = job.get('related_links', [{}])[0].get('link', 'No Link')
+            results.append(f"📌 *{title}* at *{company}*\n🔗 [Apply Here]({link})")
+        return results if results else ["No jobs found!"]
+    except Exception as e:
+        return [f"Error fetching jobs: {e}"]
 
-# === Telegram command handler ===
+# === /start command handler ===
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🔍 Searching for jobs... Please wait!")
 
-    jobs = search_jobs()
+    jobs = await search_jobs()  # Await the search_jobs call
 
     for job in jobs:
         await update.message.reply_markdown(job)
@@ -49,5 +52,5 @@ if __name__ == '__main__':
 
     app.add_handler(CommandHandler('start', start))
 
-    print("Bot is running...")
+    print("🤖 Bot is running...")
     app.run_polling()
