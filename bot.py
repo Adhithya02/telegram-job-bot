@@ -26,19 +26,25 @@ async def search_jobs(query="Developer", location="India"):
         response = requests.get(url, params=params, timeout=10)
         data = response.json()
 
-        # PRINT FULL RESPONSE FOR DEBUG
-        print("Full SerpAPI Response:", data)
+        print("Full SerpAPI Response:", data)  # Debug print
 
         if "error" in data:
             return [f"Error from SerpAPI: {data['error']}"]
 
         job_listings = data.get('jobs_results', [])
         results = []
-        for job in job_listings[:5]:
+
+        for job in job_listings[:5]:  # Top 5 jobs
             title = job.get('title', 'No Title')
             company = job.get('company_name', 'No Company')
-            link = job.get('related_links', [{}])[0].get('link', 'No Link')
-            results.append(f"📌 *{title}* at *{company}*\n🔗 [Apply Here]({link})")
+            apply_link = job.get('apply_options', [{}])[0].get('link') or job.get('detected_extensions', {}).get('apply_link') or job.get('via', '')
+            
+            if not apply_link:
+                apply_link = job.get('related_links', [{}])[0].get('link', 'Link not available')
+
+            message = f"📌 *{title}* at *{company}*\n🔗 [Apply Here]({apply_link})"
+            results.append(message)
+
         return results if results else ["No jobs found!"]
     except Exception as e:
         return [f"Error fetching jobs: {e}"]
