@@ -1,69 +1,81 @@
 import logging
 import requests
+from bs4 import BeautifulSoup
 from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+from telegram.ext import Updater, CommandHandler, CallbackContext
 
-# === YOUR TOKENS ===
-BOT_TOKEN = '7788581404:AAF2a7p7m8ZGd6tc5DNIj9VJ9saXmTZMJdc'
-SERP_API_KEY = 'b5f24ef0644d851c0ee7ce633cebceb464fee210eb80b347b7d39daf107fdbc1'
+# Configure logging
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+                    level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-# === Setup logging ===
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
+# Job search function using BeautifulSoup
+def get_jobs(query='IT jobs', location='remote'):
+    # Construct the search URL for Indeed
+    url = f'https://www.indeed.com/jobs?q={query}&l={location}'
 
-# === Async Function to search jobs ===
-async def search_jobs(query="Developer", location="India"):
-    url = "https://serpapi.com/search.json"
-    params = {
-        "engine": "google_jobs",
-        "q": query,
-        "location": location,
-        "api_key": SERP_API_KEY
-    }
-    try:
-        response = requests.get(url, params=params, timeout=10)
-        data = response.json()
+    # Send a request to Indeed
+    response = requests.get(url)
+    if response.status_code != 200:
+        return "Failed to retrieve data. Please try again later."
 
-        print("Full SerpAPI Response:", data)  # Debug print
+    # Parse the HTML content using BeautifulSoup
+    soup = BeautifulSoup(response.text, 'html.parser')
 
-        if "error" in data:
-            return [f"Error from SerpAPI: {data['error']}"]
+    # Find all job listings
+    job_elements = soup.find_all('a', {'class': 'tapItem'})
 
-        job_listings = data.get('jobs_results', [])
-        results = []
+    # If no jobs are found, return a message
+    if not job_elements:
+        return "No jobs found!"
 
-        for job in job_listings[:5]:  # Top 5 jobs
-            title = job.get('title', 'No Title')
-            company = job.get('company_name', 'No Company')
-            apply_link = job.get('apply_options', [{}])[0].get('link') or job.get('detected_extensions', {}).get('apply_link') or job.get('via', '')
-            
-            if not apply_link:
-                apply_link = job.get('related_links', [{}])[0].get('link', 'Link not available')
+    # Collect job titles, company names, and application links
+    job_list = []
+    for job in job_elements:
+        job_title = job.find('span', {'class': 'jobTitle'}).text.strip()
+        company_name = job.find('span', {'class': 'companyName'}).text.strip()
+        job_link = 'https://www.indeed.com' + job['href']
 
-            message = f"📌 *{title}* at *{company}*\n🔗 [Apply Here]({apply_link})"
-            results.append(message)
+        job_list.append(f"{job_title} at {company_name}\nApply here: {job_link}\n")
 
-        return results if results else ["No jobs found!"]
-    except Exception as e:
-        return [f"Error fetching jobs: {e}"]
+    # Return the formatted job list (limit to top 5)
+    return "\n\n".join(job_list[:5])
 
+# Command /start
+def start(update: Update, context: CallbackContext):
+    update.message.reply_text("Hello! I can help you search for IT jobs. Type /jobs to get started!")
 
-# === /start command handler ===
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🔍 Searching for jobs... Please wait!")
+# Command /jobs
+def jobs(update: Update, context: CallbackContext):
+    query = ' '.join(context.args) if context.args else 'IT jobs'  # Default to 'IT jobs'
+    location = 'remote'  # Default location
 
-    jobs = await search_jobs()  # Await the search_jobs call
+    # Get job listings
+    job_results = get_jobs(query, location)
 
-    for job in jobs:
-        await update.message.reply_markdown(job)
+    # Send the job results to the user
+    update.message.reply_text(job_results)
 
-# === Main ===
+# Main function to run the bot
+def main():
+    # Your Telegram bot token here
+    token = '7788581404:AAF2a7p7m8ZGd6tc5DNIj9VJ9saXmTZMJdc'  # Replace with your bot's token
+
+    # Create the Updater and pass it your bot's token
+    updater = Updater(token, use_context=True)
+
+    # Get the dispatcher to register handlers
+    dispatcher = updater.dispatcher
+
+    # Add handlers for commands
+    dispatcher.add_handler(CommandHandler('start', start))
+    dispatcher.add_handler(CommandHandler('jobs', jobs))
+
+    # Start the bot
+    updater.start_polling()
+
+    # Run the bot until you send a signal to stop it
+    updater.idle()
+
 if __name__ == '__main__':
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
-
-    app.add_handler(CommandHandler('start', start))
-
-    print("🤖 Bot is running...")
-    app.run_polling()
+    main()
