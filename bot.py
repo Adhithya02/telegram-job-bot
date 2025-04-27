@@ -232,19 +232,22 @@ def main():
     dispatcher.add_error_handler(error)
 
     # Start the Bot
-    if os.environ.get('RAILWAY_STATIC_URL'):
-        # Railway deployment - use webhook
+    railway_url = os.environ.get('RAILWAY_STATIC_URL')
+    if railway_url:
+        webhook_url = railway_url.rstrip('/') + '/' + TOKEN
+        print("Using webhook URL:", webhook_url)
         updater.start_webhook(
             listen="0.0.0.0",
             port=PORT,
             url_path=TOKEN,
-            webhook_url=os.environ.get('RAILWAY_STATIC_URL') + TOKEN
+            webhook_url=webhook_url
         )
     else:
-        # Local development - use polling
+        print("No Railway URL found. Using polling...")
         updater.start_polling()
-    
+
     updater.idle()
+
 
 if __name__ == '__main__':
     main()
