@@ -14,7 +14,7 @@ CHAT_ID = '1806702526'  # Replace with your Telegram chat ID (Get this from Tele
 # Logging setup for debugging
 logging.basicConfig(level=logging.DEBUG)
 
-def fetch_jobs(query="fresher developer OR IT"):
+def fetch_jobs(query="Jobs"):
     """Fetch jobs from the SerpAPI."""
     try:
         params = {
