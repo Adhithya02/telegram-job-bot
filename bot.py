@@ -1,31 +1,43 @@
+import os
+import logging
 import requests
 from bs4 import BeautifulSoup
+from telegram import Update
+from telegram.ext import Updater, CommandHandler, CallbackContext
 
-def scrape_jobs(query, location=None, num_results=5):
+# Enable logging
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Set up the bot
+TOKEN = os.getenv('TELEGRAM_TOKEN')
+
+# Scraping IT Jobs from Indeed
+def scrape_jobs(query="IT", location="remote", num_results=5):
     try:
-        # Sample Indeed URL for job search (replace with real URLs)
-        base_url = "https://www.indeed.com/jobs"
-        params = {'q': query, 'l': location} if location else {'q': query}
+        # Define the URL with the search query and location (remote or city)
+        url = f"https://www.indeed.com/jobs?q={query}&l={location}"
         
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-        }
+        # Get the page content
+        response = requests.get(url)
         
-        # Make the request to Indeed
-        response = requests.get(base_url, params=params, headers=headers)
-        soup = BeautifulSoup(response.content, 'html.parser')
+        if response.status_code != 200:
+            return []
+
+        # Parse the page content using BeautifulSoup
+        soup = BeautifulSoup(response.text, 'html.parser')
         
-        # Parse the job listings
-        job_listings = soup.find_all('div', class_='jobsearch-SerpJobCard')
+        # Find all job cards on the page
+        job_cards = soup.find_all('a', class_='result')
+        
         jobs = []
         
-        for job in job_listings[:num_results]:
-            title = job.find('a', class_='jobtitle').text.strip()
-            company = job.find('span', class_='company').text.strip() if job.find('span', class_='company') else "N/A"
-            location = job.find('div', class_='location').text.strip() if job.find('div', class_='location') else "N/A"
-            job_url = 'https://www.indeed.com' + job.find('a', class_='jobtitle')['href']
-            
-            # Collect job data
+        for job_card in job_cards[:num_results]:  # Limit the number of results
+            title = job_card.find('h2', class_='jobTitle').get_text(strip=True)
+            company = job_card.find('span', class_='companyName').get_text(strip=True)
+            location = job_card.find('div', class_='companyLocation').get_text(strip=True)
+            job_url = "https://www.indeed.com" + job_card['href']  # Apply link
+
             jobs.append({
                 'title': title,
                 'company': company,
@@ -35,13 +47,60 @@ def scrape_jobs(query, location=None, num_results=5):
         
         return jobs
     except Exception as e:
-        print(f"Error scraping jobs: {e}")
+        logger.error(f"Error scraping jobs: {e}")
         return []
 
-# Test the function with a job query
-jobs = scrape_jobs("Python Developer", "New York")
-for job in jobs:
-    print(f"Title: {job['title']}")
-    print(f"Company: {job['company']}")
-    print(f"Location: {job['location']}")
-    print(f"Apply: {job['url']}")
+# Command to start the bot
+def start(update: Update, context: CallbackContext):
+    # Send a welcome message and start fetching IT jobs
+    update.message.reply_text("Welcome! I can help you find IT jobs globally.")
+    update.message.reply_text("Fetching the latest IT job listings...")
+
+    # Get IT jobs using the scrape_jobs function
+    jobs = scrape_jobs(query="IT", location="remote", num_results=5)
+
+    if jobs:
+        for job in jobs:
+            job_text = (
+                f"🔹 *{job['title']}*\n"
+                f"🏢 {job['company']}\n"
+                f"📍 {job['location']}\n"
+                f"🔗 [Apply Here]({job['url']})"
+            )
+            update.message.reply_text(job_text, parse_mode='Markdown', disable_web_page_preview=True)
+    else:
+        update.message.reply_text("Sorry, no jobs found. Please try again later.")
+
+# Help command handler
+def help_command(update: Update, context: CallbackContext):
+    update.message.reply_text(
+        "JobSearchBot Commands:\n\n"
+        "/start - Start the bot and see IT job listings globally\n"
+        "/help - Show this help message"
+    )
+
+# Error handler
+def error(update: Update, context: CallbackContext):
+    logger.warning(f'Update "{update}" caused error "{context.error}"')
+
+# Main function to set up the bot
+def main():
+    # Set up the Updater and Dispatcher
+    updater = Updater(TOKEN)
+    dispatcher = updater.dispatcher
+
+    # Add command handlers
+    dispatcher.add_handler(CommandHandler("start", start))
+    dispatcher.add_handler(CommandHandler("help", help_command))
+
+    # Add error handler
+    dispatcher.add_error_handler(error)
+
+    # Start the bot
+    updater.start_polling()
+
+    # Run the bot until you press Ctrl+C
+    updater.idle()
+
+if __name__ == '__main__':
+    main()
