@@ -1,56 +1,34 @@
 from telegram import Bot
-from telegram.ext import Application, CommandHandler
+from telegram.ext import Updater, CommandHandler, CallbackContext
 import requests
-import os
 
-# Telegram Bot Token and Chat ID
 TOKEN = '7788581404:AAF2a7p7m8ZGd6tc5DNIj9VJ9saXmTZMJdc'  # Replace with your bot token
 CHAT_ID = 'Adhithya_02'  # Replace with your Telegram user ID
 
-async def start(update, context):
-    await context.bot.send_message(chat_id=update.effective_chat.id, text="Hello! I will track job updates for you.")
+def start(update, context):
+    context.bot.send_message(chat_id=update.effective_chat.id, text="Hello! I will track job updates for you.")
 
-async def fetch_jobs():
-    url = 'https://jobs.github.com/positions.json'
-    
-    # Define the query parameters
-    query = {
-        'description': 'fresher developer OR IT jobs',
-        'location': 'India'
-    }
-    
-    # Make the API request to GitHub Jobs API
-    response = requests.get(url, params=query)
-    
-    # If the request is successful, parse the data
-    if response.status_code == 200:
-        jobs = response.json()  # Get the job listings
-        print(f"Fetched Jobs: {jobs}")  # Debugging line
-        job_list = []
-        for job in jobs[:5]:
-            job_list.append(f"📌 *{job['title']}*\n🏢 {job['company']}\n📍 {job['location']}\n🔗 {job['url']}")
-        return job_list
-    else:
-        return ["❌ Error fetching jobs."]
+def fetch_jobs():
+    # Dummy job message for now
+    return ["Sample Job: Fresher Software Developer at ABC Corp"]
 
-async def job_alert(context):
-    print("Running job alert...")  # Debugging line
-    jobs = await fetch_jobs()
+def job_alert(context: CallbackContext):
+    jobs = fetch_jobs()
     for job in jobs:
-        await context.bot.send_message(chat_id=CHAT_ID, text=job, parse_mode="Markdown")
+        context.bot.send_message(chat_id=CHAT_ID, text=job)
 
 def main():
-    # Create an application instance using the bot token
-    application = Application.builder().token(TOKEN).build()
-
-    # Command Handler to start the bot
-    application.add_handler(CommandHandler("start", start))
-
-    # Schedule job every hour (3600 seconds)
-    application.job_queue.run_repeating(job_alert, interval=3600, first=10)
-
-    # Start polling for updates
-    application.run_polling()
+    # Use the Updater with the token
+    updater = Updater(TOKEN, use_context=True)
+    dp = updater.dispatcher
+    dp.add_handler(CommandHandler("start", start))
+    
+    # Schedule job every hour
+    jq = updater.job_queue
+    jq.run_repeating(job_alert, interval=3600, first=10)
+    
+    updater.start_polling()
+    updater.idle()
 
 if __name__ == "__main__":
     main()
