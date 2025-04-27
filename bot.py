@@ -14,7 +14,7 @@ logging.basicConfig(
 )
 
 # === Async Function to search jobs ===
-async def search_jobs(query="Software Developer", location="Remote"):
+async def search_jobs(query="Developer", location="Remote"):
     url = "https://serpapi.com/search.json"
     params = {
         "engine": "google_jobs",
@@ -25,10 +25,16 @@ async def search_jobs(query="Software Developer", location="Remote"):
     try:
         response = requests.get(url, params=params, timeout=10)
         data = response.json()
-        
+
+        # PRINT FULL RESPONSE FOR DEBUG
+        print("Full SerpAPI Response:", data)
+
+        if "error" in data:
+            return [f"Error from SerpAPI: {data['error']}"]
+
         job_listings = data.get('jobs_results', [])
         results = []
-        for job in job_listings[:5]:  # Top 5 results
+        for job in job_listings[:5]:
             title = job.get('title', 'No Title')
             company = job.get('company_name', 'No Company')
             link = job.get('related_links', [{}])[0].get('link', 'No Link')
@@ -36,6 +42,7 @@ async def search_jobs(query="Software Developer", location="Remote"):
         return results if results else ["No jobs found!"]
     except Exception as e:
         return [f"Error fetching jobs: {e}"]
+
 
 # === /start command handler ===
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
