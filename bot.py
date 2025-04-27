@@ -14,7 +14,7 @@ logging.basicConfig(
 )
 
 # === Async Function to search jobs ===
-async def search_jobs(query="Developer", location="Remote"):
+async def search_jobs(query="Developer", location="India"):
     url = "https://serpapi.com/search.json"
     params = {
         "engine": "google_jobs",
