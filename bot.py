@@ -14,40 +14,59 @@ logging.basicConfig(
 )
 
 # === Async Function to search jobs ===
-async def search_jobs(query="Developer", location="India"):
+async def search_jobs(location="India"):
     url = "https://serpapi.com/search.json"
-    params = {
-        "engine": "google_jobs",
-        "q": query,
-        "location": location,
-        "api_key": SERP_API_KEY
-    }
+    queries = [
+        "Software Developer",
+        "Python Developer",
+        "Web Developer",
+        "Backend Developer",
+        "Frontend Developer",
+        "Data Scientist",
+        "Machine Learning Engineer",
+        "DevOps Engineer",
+        "Full Stack Developer",
+        "Mobile App Developer"
+    ]
+
+    all_jobs = []
+
     try:
-        response = requests.get(url, params=params, timeout=10)
-        data = response.json()
+        for query in queries:
+            params = {
+                "engine": "google_jobs",
+                "q": query,
+                "location": location,
+                "api_key": SERP_API_KEY
+            }
 
-        print("Full SerpAPI Response:", data)  # Debug print
+            response = requests.get(url, params=params, timeout=10)
+            data = response.json()
 
-        if "error" in data:
-            return [f"Error from SerpAPI: {data['error']}"]
+            if "error" in data:
+                print(f"Error fetching {query}: {data['error']}")
+                continue
 
-        job_listings = data.get('jobs_results', [])
-        results = []
+            job_listings = data.get('jobs_results', [])
 
-        for job in job_listings[:5]:  # Top 5 jobs
-            title = job.get('title', 'No Title')
-            company = job.get('company_name', 'No Company')
-            apply_link = job.get('apply_options', [{}])[0].get('link') or job.get('detected_extensions', {}).get('apply_link') or job.get('via', '')
-            
-            if not apply_link:
-                apply_link = job.get('related_links', [{}])[0].get('link', 'Link not available')
+            for job in job_listings[:2]:  # Fetch 2 jobs per query (so 10x2=20 jobs total)
+                title = job.get('title', 'No Title')
+                company = job.get('company_name', 'No Company')
 
-            message = f"📌 *{title}* at *{company}*\n🔗 [Apply Here]({apply_link})"
-            results.append(message)
+                apply_link = (
+                    job.get('apply_options', [{}])[0].get('link') or
+                    job.get('detected_extensions', {}).get('apply_link') or
+                    job.get('related_links', [{}])[0].get('link', 'Link not available')
+                )
 
-        return results if results else ["No jobs found!"]
+                message = f"📌 *{title}* at *{company}*\n🔗 [Apply Here]({apply_link})"
+                all_jobs.append(message)
+
+        return all_jobs if all_jobs else ["No IT jobs found!"]
+
     except Exception as e:
         return [f"Error fetching jobs: {e}"]
+
 
 
 # === /start command handler ===
