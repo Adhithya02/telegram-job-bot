@@ -1,56 +1,34 @@
-from telegram.ext import Updater, CommandHandler
-from serpapi import GoogleSearch
+from telegram.ext import Updater, CommandHandler, MessageHandler, Filters
 
-# Your credentials
-TELEGRAM_BOT_TOKEN = '7788581404:AAF2a7p7m8ZGd6tc5DNIj9VJ9saXmTZMJdc'
-SERP_API_KEY = 'b5f24ef0644d851c0ee7ce633cebceb464fee210eb80b347b7d39daf107fdbc1'
+# Replace 'your-telegram-bot-token' with your actual bot token
+TOKEN = 'your-telegram-bot-token'
 
-# Function to fetch jobs
-def fetch_jobs():
-    params = {
-        "engine": "google_jobs",
-        "q": "IT jobs",
-        "hl": "en",
-        "location": "India",
-        "api_key": SERP_API_KEY
-    }
-
-    search = GoogleSearch(params)
-    results = search.get_dict()
-
-    jobs_list = []
-
-    if "jobs_results" in results:
-        for job in results["jobs_results"][:5]:
-            title = job.get("title", "No Title")
-            company = job.get("company_name", "Unknown Company")
-            location = job.get("location", "Unknown Location")
-            link = job.get("via", "")
-            job_info = f"📌 {title}\n🏢 {company}\n📍 {location}\n🔗 {link}\n"
-            jobs_list.append(job_info)
-    else:
-        jobs_list.append("❗ No jobs found.")
-
-    return jobs_list
-
-# /start command handler
+# Function to handle the /start command
 def start(update, context):
-    update.message.reply_text("🔍 Searching for IT jobs for you... Please wait!")
+    update.message.reply_text('Hello! I am your chatbot. How can I assist you?')
 
-    jobs = fetch_jobs()
+# Function to handle all text messages
+def echo(update, context):
+    user_message = update.message.text
+    response = f'You said: {user_message}'
+    update.message.reply_text(response)
 
-    for job in jobs:
-        update.message.reply_text(job)
-
-# Main function
+# Main function to set up the bot
 def main():
-    updater = Updater(TELEGRAM_BOT_TOKEN, use_context=True)
+    updater = Updater(TOKEN, use_context=True)
+
     dp = updater.dispatcher
 
+    # Handler for the /start command
     dp.add_handler(CommandHandler("start", start))
 
-    print("Bot is running...")
+    # Handler for all text messages
+    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, echo))
+
+    # Start the bot
     updater.start_polling()
+
+    # Run the bot until you stop it
     updater.idle()
 
 if __name__ == '__main__':
