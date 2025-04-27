@@ -1,6 +1,6 @@
 import os
 from telegram import Update
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 
 # Hardcoded job list
 JOBS = [
@@ -13,8 +13,8 @@ JOBS = [
 ]
 
 # Start command
-def start(update: Update, context: CallbackContext):
-    update.message.reply_text("Welcome to the Job Search Bot!\nSearching for IT jobs for you...")
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Welcome to the Job Search Bot!\nSearching for IT jobs for you...")
 
     # Automatically search for IT jobs
     query = "IT"
@@ -27,14 +27,14 @@ def start(update: Update, context: CallbackContext):
     else:
         response = "Sorry, no IT jobs found right now."
 
-    update.message.reply_text(response)
+    await update.message.reply_text(response)
 
 # Help command
-def help_command(update: Update, context: CallbackContext):
-    update.message.reply_text("Type any keyword to search for jobs (e.g., 'developer', 'data', 'designer').")
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Type any keyword to search for jobs (e.g., 'developer', 'data', 'designer').")
 
 # Manual job search
-def search_jobs(update: Update, context: CallbackContext):
+async def search_jobs(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.message.text.lower()
     matched_jobs = [job for job in JOBS if query in job["title"].lower()]
 
@@ -45,29 +45,27 @@ def search_jobs(update: Update, context: CallbackContext):
     else:
         response = "Sorry, no jobs found matching your search."
 
-    update.message.reply_text(response)
+    await update.message.reply_text(response)
 
-def main():
-    # Get bot token from environment variable
+async def main():
+    # Get bot token
     TOKEN = os.getenv("7788581404:AAF2a7p7m8ZGd6tc5DNIj9VJ9saXmTZMJdc")
 
     if not TOKEN:
         print("Error: TELEGRAM_BOT_TOKEN not set")
         return
 
-    # Create updater and dispatcher
-    updater = Updater(TOKEN, use_context=True)
-    dispatcher = updater.dispatcher
+    # Initialize app
+    app = ApplicationBuilder().token(TOKEN).build()
 
-    # Handlers
-    dispatcher.add_handler(CommandHandler("start", start))
-    dispatcher.add_handler(CommandHandler("help", help_command))
-    dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, search_jobs))
+    # Add handlers
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), search_jobs))
 
-    # Start polling
-    PORT = int(os.environ.get('PORT', 8443))
-    updater.start_polling()
-    updater.idle()
+    # Run the bot
+    await app.run_polling()
 
 if __name__ == "__main__":
-    main()
+    import asyncio
+    asyncio.run(main())
