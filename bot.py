@@ -3,7 +3,7 @@ import logging
 import requests
 from bs4 import BeautifulSoup
 from telegram import Update
-from telegram.ext import Updater, CommandHandler, CallbackContext
+from telegram.ext import Application, CommandHandler, CallbackContext
 
 # Enable logging
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
@@ -51,10 +51,10 @@ def scrape_jobs(query="IT", location="remote", num_results=5):
         return []
 
 # Command to start the bot
-def start(update: Update, context: CallbackContext):
+async def start(update: Update, context: CallbackContext):
     # Send a welcome message and start fetching IT jobs
-    update.message.reply_text("Welcome! I can help you find IT jobs globally.")
-    update.message.reply_text("Fetching the latest IT job listings...")
+    await update.message.reply_text("Welcome! I can help you find IT jobs globally.")
+    await update.message.reply_text("Fetching the latest IT job listings...")
 
     # Get IT jobs using the scrape_jobs function
     jobs = scrape_jobs(query="IT", location="remote", num_results=5)
@@ -67,13 +67,13 @@ def start(update: Update, context: CallbackContext):
                 f"📍 {job['location']}\n"
                 f"🔗 [Apply Here]({job['url']})"
             )
-            update.message.reply_text(job_text, parse_mode='Markdown', disable_web_page_preview=True)
+            await update.message.reply_text(job_text, parse_mode='Markdown', disable_web_page_preview=True)
     else:
-        update.message.reply_text("Sorry, no jobs found. Please try again later.")
+        await update.message.reply_text("Sorry, no jobs found. Please try again later.")
 
 # Help command handler
-def help_command(update: Update, context: CallbackContext):
-    update.message.reply_text(
+async def help_command(update: Update, context: CallbackContext):
+    await update.message.reply_text(
         "JobSearchBot Commands:\n\n"
         "/start - Start the bot and see IT job listings globally\n"
         "/help - Show this help message"
@@ -85,22 +85,18 @@ def error(update: Update, context: CallbackContext):
 
 # Main function to set up the bot
 def main():
-    # Set up the Updater and Dispatcher
-    updater = Updater(TOKEN)
-    dispatcher = updater.dispatcher
+    # Set up the Application (previously Updater in older versions)
+    application = Application.builder().token(TOKEN).build()
 
     # Add command handlers
-    dispatcher.add_handler(CommandHandler("start", start))
-    dispatcher.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("help", help_command))
 
     # Add error handler
-    dispatcher.add_error_handler(error)
+    application.add_error_handler(error)
 
     # Start the bot
-    updater.start_polling()
-
-    # Run the bot until you press Ctrl+C
-    updater.idle()
+    application.run_polling()
 
 if __name__ == '__main__':
     main()
