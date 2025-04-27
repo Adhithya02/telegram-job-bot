@@ -1,7 +1,7 @@
+import logging
 from telegram.ext import Updater, CommandHandler
 from apscheduler.schedulers.background import BackgroundScheduler
 import requests
-import logging
 
 # SerpAPI configuration
 SERP_API_KEY = 'b5f24ef0644d851c0ee7ce633cebceb464fee210eb80b347b7d39daf107fdbc1'  # Replace with your SerpAPI key
@@ -19,10 +19,10 @@ def fetch_jobs(query="fresher developer OR IT"):
     try:
         params = {
             'q': query,
-            'location': 'remote',
             'api_key': SERP_API_KEY  # Make sure the API key is correct
         }
 
+        # Removing location parameter as it might be unsupported
         response = requests.get(GITHUB_JOBS_API_URL, params=params)
         
         # Log the API response for debugging
@@ -65,6 +65,9 @@ def main():
     dp = updater.dispatcher
 
     dp.add_handler(CommandHandler("start", start))
+
+    # Ensure webhook is deleted before starting polling
+    updater.bot.delete_webhook()
 
     jq = updater.job_queue
     jq.run_repeating(job_alert, interval=3600, first=10)  # Run job_alert every 1 hour
