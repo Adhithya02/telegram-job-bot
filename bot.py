@@ -2,19 +2,51 @@ import os
 import requests
 from bs4 import BeautifulSoup
 from telegram import Bot
-from telegram.ext import ApplicationBuilder, ContextTypes
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from telegram.ext import ApplicationBuilder
+from apscheduler.schedulers.background import BackgroundScheduler
 import asyncio
+import nest_asyncio
 
-# Set your environment variables in Railway (TELEGRAM_BOT_TOKEN and CHAT_ID)
+# Apply Railway event loop fix
+nest_asyncio.apply()
+
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-CHAT_ID = os.getenv("CHAT_ID")  # Should be a string
+CHAT_ID = os.getenv("CHAT_ID")
 
 sent_jobs = set()
 
-# Scrape jobs from RemoteOK
-async def scrape_remoteok():
-    url = "https://remoteok.com/remote-it-jobs"
+def scrape_indeed():
+    url = "https://www.indeed.com/q-IT-jobs.html"
+    headers = {"User-Agent": "Mozilla/5.0"}
+    response = requests.get(url, headers=headers)
+    soup = BeautifulSoup(response.text, "html.parser")
+    jobs = []
+    for div in soup.find_all("div", class_="cardOutline"):
+        title = div.find("h2")
+        if title:
+            a_tag = title.find("a")
+            if a_tag and a_tag.has_attr('href'):
+                link = "https://indeed.com" + a_tag['href']
+                job_title = title.get_text(strip=True)
+                jobs.append((job_title, link))
+    return jobs
+
+def scrape_monster():
+    url = "https://www.monster.com/jobs/search/?q=IT&where="
+    headers = {"User-Agent": "Mozilla/5.0"}
+    response = requests.get(url, headers=headers)
+    soup = BeautifulSoup(response.text, "html.parser")
+    jobs = []
+    for div in soup.find_all('section', class_='card-content'):
+        title = div.find('h2', class_='title')
+        if title and title.a:
+            link = title.a['href']
+            job_title = title.text.strip()
+            jobs.append((job_title, link))
+    return jobs
+
+def scrape_remoteok():
+    url = "https://remoteok.com/remote-dev-jobs"
     headers = {"User-Agent": "Mozilla/5.0"}
     response = requests.get(url, headers=headers)
     soup = BeautifulSoup(response.text, "html.parser")
@@ -29,50 +61,14 @@ async def scrape_remoteok():
                 jobs.append((job_title, link))
     return jobs
 
-# Scrape jobs from Wellfound
-async def scrape_wellfound():
-    url = "https://wellfound.com/jobs"
-    headers = {"User-Agent": "Mozilla/5.0"}
-    response = requests.get(url, headers=headers)
-    soup = BeautifulSoup(response.text, "html.parser")
-    jobs = []
-    for div in soup.find_all('div', class_='styles_component__1AIbG'):
-        title_tag = div.find('a')
-        if title_tag:
-            link = "https://wellfound.com" + title_tag['href']
-            job_title = title_tag.get_text(strip=True)
-            jobs.append((job_title, link))
-    return jobs
-
-# Scrape jobs from WeWorkRemotely
-async def scrape_weworkremotely():
-    url = "https://weworkremotely.com/categories/remote-programming-jobs"
-    headers = {"User-Agent": "Mozilla/5.0"}
-    response = requests.get(url, headers=headers)
-    soup = BeautifulSoup(response.text, "html.parser")
-    jobs = []
-    for li in soup.find_all('li', class_='feature'):
-        a_tag = li.find('a')
-        if a_tag:
-            link = "https://weworkremotely.com" + a_tag['href']
-            title_tag = li.find('span', class_='title')
-            if title_tag:
-                job_title = title_tag.get_text(strip=True)
-                jobs.append((job_title, link))
-    return jobs
-
-# Function to send new jobs to Telegram
-async def send_new_jobs(bot: Bot):
-    all_jobs = []
-    all_jobs += await scrape_remoteok()
-    all_jobs += await scrape_wellfound()
-    all_jobs += await scrape_weworkremotely()
-
+async def send_new_jobs():
+    bot = Bot(BOT_TOKEN)
+    all_jobs = scrape_indeed() + scrape_monster() + scrape_remoteok()
     for job_title, link in all_jobs:
         unique_id = f"{job_title}_{link}"
         if unique_id not in sent_jobs:
             sent_jobs.add(unique_id)
-            message = f"💼 [{job_title}]({link})"
+            message = f"💼 *{job_title}*\\n🔗 [Apply Here]({link})"
             try:
                 await bot.send_message(
                     chat_id=CHAT_ID,
@@ -83,31 +79,34 @@ async def send_new_jobs(bot: Bot):
             except Exception as e:
                 print(f"Error sending job: {e}")
 
-# Background scheduler task
-async def scheduled_task(app):
-    await send_new_jobs(app.bot)
+def start_scheduler(loop):
+    scheduler = BackgroundScheduler()
 
-# Main method
-async def main():
-    print("Bot is starting...")
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    def sync_send_jobs():
+        asyncio.run_coroutine_threadsafe(send_new_jobs(), loop)
 
-    # Start job fetching scheduler
-    scheduler = AsyncIOScheduler()
-    scheduler.add_job(scheduled_task, "interval", minutes=2, args=[app])
+    scheduler.add_job(sync_send_jobs, 'interval', minutes=2)
     scheduler.start()
     print("Scheduler started...")
 
-    # Start the bot and polling
+async def main():
+    global CHAT_ID
+    bot = Bot(BOT_TOKEN)
+
+    # detect chat_id if not set
+    if not CHAT_ID:
+        updates = await bot.get_updates()
+        if updates:
+            CHAT_ID = updates[-1].message.chat_id
+            print(f"Detected CHAT_ID automatically: {CHAT_ID}")
+
+    loop = asyncio.get_running_loop()
+    start_scheduler(loop)
+
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    print("Bot started and polling...")
     await app.run_polling()
 
-# Entry point for the script
 if __name__ == "__main__":
-    try:
-        # Using the existing event loop to run the main function without conflict
-        loop = asyncio.get_event_loop()
-        loop.create_task(main())  # Creates the task to run the bot
-        loop.run_forever()  # Keep the event loop running
-    except RuntimeError as e:
-        print(f"Error: {e}")
-        print("It seems an event loop is already running.")
+    print("Bot is starting...")
+    asyncio.get_event_loop().run_until_complete(main())
