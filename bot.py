@@ -7,7 +7,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 import asyncio
 import nest_asyncio
 
-# Apply fix for Railway event loop issue
+# Apply Railway event loop fix
 nest_asyncio.apply()
 
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -79,22 +79,30 @@ async def send_new_jobs():
             except Exception as e:
                 print(f"Error sending job: {e}")
 
-def start_scheduler():
+def start_scheduler(loop):
     scheduler = BackgroundScheduler()
-    scheduler.add_job(lambda: asyncio.create_task(send_new_jobs()), 'interval', minutes=2)
+
+    def sync_send_jobs():
+        asyncio.run_coroutine_threadsafe(send_new_jobs(), loop)
+
+    scheduler.add_job(sync_send_jobs, 'interval', minutes=2)
     scheduler.start()
     print("Scheduler started...")
 
 async def main():
     global CHAT_ID
     bot = Bot(BOT_TOKEN)
+
+    # detect chat_id if not set
     if not CHAT_ID:
         updates = await bot.get_updates()
         if updates:
             CHAT_ID = updates[-1].message.chat_id
             print(f"Detected CHAT_ID automatically: {CHAT_ID}")
 
-    start_scheduler()
+    loop = asyncio.get_running_loop()
+    start_scheduler(loop)
+
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     print("Bot started and polling...")
     await app.run_polling()
