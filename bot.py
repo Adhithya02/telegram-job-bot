@@ -1,16 +1,27 @@
 import requests
 from bs4 import BeautifulSoup
+import random
+import time
 
 # Define the URL to scrape
 IT_JOBS_URL = "https://www.indeed.com/jobs?q=developer&l="
+
+# List of User-Agent strings (add more if needed)
+user_agents = [
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.93 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 6.1; WOW64; rv:40.0) Gecko/20100101 Firefox/40.0',
+    'Mozilla/5.0 (Windows NT 6.1; WOW64; rv:35.0) Gecko/20100101 Firefox/35.0',
+    'Mozilla/5.0 (Windows NT 6.1; WOW64; rv:33.0) Gecko/20100101 Firefox/33.0'
+]
 
 # Define a function to scrape Indeed job listings
 def scrape_indeed_jobs():
     jobs = []
     
-    # Set custom headers to mimic a browser (avoid 403 Forbidden error)
+    # Select a random User-Agent from the list to avoid blocking
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        'User-Agent': random.choice(user_agents)
     }
     
     try:
