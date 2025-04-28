@@ -2,13 +2,13 @@ import os
 import requests
 from bs4 import BeautifulSoup
 from telegram import Bot
-from telegram.ext import Updater
+from telegram.ext import ApplicationBuilder
 from apscheduler.schedulers.background import BackgroundScheduler
-import time
+import asyncio
 
-# Your Telegram Bot Token
+# Load environment variables
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-CHAT_ID = os.getenv("CHAT_ID")  # You can set this after bot starts if needed.
+CHAT_ID = os.getenv("CHAT_ID")  # Can be empty at start
 
 # Websites to scrape
 JOB_SITES = [
@@ -29,9 +29,11 @@ def scrape_indeed():
     for div in soup.find_all(name="div", attrs={"class":"cardOutline"}):
         title = div.find("h2")
         if title:
-            link = "https://indeed.com" + title.find("a")["href"]
-            job_title = title.get_text(strip=True)
-            jobs.append((job_title, link))
+            link_tag = title.find("a")
+            if link_tag and link_tag.has_attr('href'):
+                link = "https://indeed.com" + link_tag["href"]
+                job_title = title.get_text(strip=True)
+                jobs.append((job_title, link))
     return jobs
 
 def scrape_monster():
@@ -60,11 +62,13 @@ def scrape_remoteok():
         a_tag = tr.find('a', {'itemprop': 'url'})
         if a_tag:
             link = "https://remoteok.com" + a_tag['href']
-            job_title = tr.find('h2', {'itemprop': 'title'}).get_text(strip=True)
-            jobs.append((job_title, link))
+            title_tag = tr.find('h2', {'itemprop': 'title'})
+            if title_tag:
+                job_title = title_tag.get_text(strip=True)
+                jobs.append((job_title, link))
     return jobs
 
-def send_new_jobs(context):
+async def send_new_jobs():
     bot = Bot(BOT_TOKEN)
 
     all_jobs = scrape_indeed() + scrape_monster() + scrape_remoteok()
@@ -75,7 +79,7 @@ def send_new_jobs(context):
             sent_jobs.add(unique_id)
             message = f"💼 *{job_title}*\n🔗 [Apply Here]({link})"
             try:
-                bot.send_message(
+                await bot.send_message(
                     chat_id=CHAT_ID,
                     text=message,
                     parse_mode='Markdown',
@@ -84,24 +88,30 @@ def send_new_jobs(context):
             except Exception as e:
                 print(f"Error sending job: {e}")
 
-def start_bot():
-    updater = Updater(BOT_TOKEN)
+def start_scheduler():
+    scheduler = BackgroundScheduler()
+    scheduler.add_job(lambda: asyncio.run(send_new_jobs()), 'interval', minutes=2)
+    scheduler.start()
+    print("Scheduler started...")
+
+async def main():
+    global CHAT_ID
+
     bot = Bot(BOT_TOKEN)
 
-    global CHAT_ID
     if not CHAT_ID:
-        # Get chat ID by sending a message to the user
-        updates = bot.get_updates()
+        updates = await bot.get_updates()
         if updates:
             CHAT_ID = updates[-1].message.chat_id
+            print(f"Detected CHAT_ID automatically: {CHAT_ID}")
 
-    scheduler = BackgroundScheduler()
-    scheduler.add_job(send_new_jobs, 'interval', minutes=2)
-    scheduler.start()
+    start_scheduler()
 
-    updater.start_polling()
-    updater.idle()
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
+
+    print("Bot started and polling...")
+    await app.run_polling()
 
 if __name__ == "__main__":
     print("Bot is starting...")
-    start_bot()
+    asyncio.run(main())
