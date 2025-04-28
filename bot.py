@@ -87,7 +87,7 @@ async def send_new_jobs(bot: Bot):
 async def scheduled_task(app):
     await send_new_jobs(app.bot)
 
-# Main
+# Main method
 async def main():
     print("Bot is starting...")
     app = ApplicationBuilder().token(BOT_TOKEN).build()
@@ -98,16 +98,15 @@ async def main():
     scheduler.start()
     print("Scheduler started...")
 
-    print("Bot started and polling...")
     # Start the bot and polling
     await app.run_polling()
 
 # Entry point for the script
 if __name__ == "__main__":
     try:
-        # Allow the event loop to run without trying to create a new one
+        # Using the existing event loop to run the main function without conflict
         loop = asyncio.get_event_loop()
-        loop.create_task(main())
+        loop.create_task(main())  # Creates the task to run the bot
         loop.run_forever()  # Keep the event loop running
     except RuntimeError as e:
         print(f"Error: {e}")
