@@ -99,7 +99,14 @@ async def main():
     print("Scheduler started...")
 
     print("Bot started and polling...")
+    # Start the bot and polling
     await app.run_polling()
 
+# Entry point for the script
 if __name__ == "__main__":
-    asyncio.run(main())
+    # Instead of asyncio.run(), directly start the event loop
+    try:
+        asyncio.get_event_loop().run_until_complete(main())
+    except RuntimeError as e:
+        print(f"Error: {e}")
+        print("It seems an event loop is already running.")
