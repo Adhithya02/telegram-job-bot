@@ -5,16 +5,16 @@ from bs4 import BeautifulSoup
 from fastapi import FastAPI, Request
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
+from contextlib import asynccontextmanager
 
-# Telegram token and webhook
+# Setup
 TOKEN = os.environ["TELEGRAM_TOKEN"]
-WEBHOOK_URL = os.environ["WEBHOOK_URL"]  # e.g., https://yourproject.up.railway.app
+WEBHOOK_URL = os.environ["WEBHOOK_URL"]
 
-# Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Scraper
+# Job scraper
 def scrape_indeed_jobs(query="IT", location="Remote", num_results=5):
     headers = {"User-Agent": "Mozilla/5.0"}
     search_query = '+'.join(query.split())
@@ -35,7 +35,7 @@ def scrape_indeed_jobs(query="IT", location="Remote", num_results=5):
         jobs.append({"title": title, "company": company, "location": location, "url": link})
     return jobs
 
-# Bot command handler
+# Command handler
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("📡 Fetching latest IT jobs...")
     jobs = scrape_indeed_jobs()
@@ -48,16 +48,20 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         await update.message.reply_text(message, parse_mode="Markdown", disable_web_page_preview=True)
 
-# FastAPI setup
-app = FastAPI()
-
-@app.on_event("startup")
-async def startup():
+# Lifespan manager for startup tasks
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     global bot_app
     bot_app = Application.builder().token(TOKEN).build()
     bot_app.add_handler(CommandHandler("start", start))
     await bot_app.bot.set_webhook(url=f"{WEBHOOK_URL}/webhook")
+    yield  # App runs here
+    # (Optional) cleanup actions go here
 
+# FastAPI app with modern lifespan
+app = FastAPI(lifespan=lifespan)
+
+# Webhook route
 @app.post("/webhook")
 async def telegram_webhook(req: Request):
     data = await req.json()
