@@ -1,80 +1,107 @@
+import os
 import requests
 from bs4 import BeautifulSoup
-import random
+from telegram import Bot
+from telegram.ext import Updater
+from apscheduler.schedulers.background import BackgroundScheduler
 import time
 
-# Define the URL to scrape
-IT_JOBS_URL = "https://www.indeed.com/jobs?q=developer&l="
+# Your Telegram Bot Token
+BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+CHAT_ID = os.getenv("CHAT_ID")  # You can set this after bot starts if needed.
 
-# List of User-Agent strings (add more if needed)
-user_agents = [
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.93 Safari/537.36',
-    'Mozilla/5.0 (Windows NT 6.1; WOW64; rv:40.0) Gecko/20100101 Firefox/40.0',
-    'Mozilla/5.0 (Windows NT 6.1; WOW64; rv:35.0) Gecko/20100101 Firefox/35.0',
-    'Mozilla/5.0 (Windows NT 6.1; WOW64; rv:33.0) Gecko/20100101 Firefox/33.0'
+# Websites to scrape
+JOB_SITES = [
+    "https://www.indeed.com/q-IT-jobs.html",
+    "https://www.monster.com/jobs/search/?q=IT&where=",
+    "https://remoteok.com/remote-dev-jobs",
 ]
 
-# Define a function to scrape Indeed job listings
-def scrape_indeed_jobs():
+sent_jobs = set()
+
+def scrape_indeed():
+    url = "https://www.indeed.com/q-IT-jobs.html"
+    headers = {"User-Agent": "Mozilla/5.0"}
+    response = requests.get(url, headers=headers)
+    soup = BeautifulSoup(response.text, "html.parser")
     jobs = []
-    
-    # Select a random User-Agent from the list to avoid blocking
-    headers = {
-        'User-Agent': random.choice(user_agents)
-    }
-    
-    try:
-        # Send a GET request with custom headers
-        response = requests.get(IT_JOBS_URL, headers=headers)
-        
-        # Check for successful request
-        response.raise_for_status()
-        
-        # Parse the response HTML using BeautifulSoup
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
-        # Find all the job cards on the page (inspect the page for correct HTML structure)
-        job_cards = soup.find_all('div', class_='jobsearch-SerpJobCard')  # This class is specific to Indeed, adjust as needed
-        
-        # Loop through job cards and extract relevant details
-        for job in job_cards:
-            title = job.find('a', class_='jobtitle')
-            company = job.find('span', class_='company')
-            location = job.find('div', class_='location')
-            apply_link = "https://www.indeed.com" + title['href'] if title else None
-            
-            if title and company and location and apply_link:
-                job_info = {
-                    'title': title.get_text(strip=True),
-                    'company': company.get_text(strip=True),
-                    'location': location.get_text(strip=True),
-                    'apply_link': apply_link
-                }
-                jobs.append(job_info)
-    
-    except requests.exceptions.HTTPError as e:
-        print(f"HTTP Error occurred: {e}")
-    except requests.exceptions.RequestException as e:
-        print(f"Request Exception occurred: {e}")
-    except Exception as e:
-        print(f"An error occurred: {e}")
-    
+
+    for div in soup.find_all(name="div", attrs={"class":"cardOutline"}):
+        title = div.find("h2")
+        if title:
+            link = "https://indeed.com" + title.find("a")["href"]
+            job_title = title.get_text(strip=True)
+            jobs.append((job_title, link))
     return jobs
 
-# Test the function to check if it works
+def scrape_monster():
+    url = "https://www.monster.com/jobs/search/?q=IT&where="
+    headers = {"User-Agent": "Mozilla/5.0"}
+    response = requests.get(url, headers=headers)
+    soup = BeautifulSoup(response.text, "html.parser")
+    jobs = []
+
+    for div in soup.find_all('section', attrs={'class': 'card-content'}):
+        title = div.find('h2', attrs={'class': 'title'})
+        if title and title.a:
+            link = title.a['href']
+            job_title = title.text.strip()
+            jobs.append((job_title, link))
+    return jobs
+
+def scrape_remoteok():
+    url = "https://remoteok.com/remote-dev-jobs"
+    headers = {"User-Agent": "Mozilla/5.0"}
+    response = requests.get(url, headers=headers)
+    soup = BeautifulSoup(response.text, "html.parser")
+    jobs = []
+
+    for tr in soup.find_all('tr', {'class': 'job'}):
+        a_tag = tr.find('a', {'itemprop': 'url'})
+        if a_tag:
+            link = "https://remoteok.com" + a_tag['href']
+            job_title = tr.find('h2', {'itemprop': 'title'}).get_text(strip=True)
+            jobs.append((job_title, link))
+    return jobs
+
+def send_new_jobs(context):
+    bot = Bot(BOT_TOKEN)
+
+    all_jobs = scrape_indeed() + scrape_monster() + scrape_remoteok()
+
+    for job_title, link in all_jobs:
+        unique_id = f"{job_title}_{link}"
+        if unique_id not in sent_jobs:
+            sent_jobs.add(unique_id)
+            message = f"💼 *{job_title}*\n🔗 [Apply Here]({link})"
+            try:
+                bot.send_message(
+                    chat_id=CHAT_ID,
+                    text=message,
+                    parse_mode='Markdown',
+                    disable_web_page_preview=False
+                )
+            except Exception as e:
+                print(f"Error sending job: {e}")
+
+def start_bot():
+    updater = Updater(BOT_TOKEN)
+    bot = Bot(BOT_TOKEN)
+
+    global CHAT_ID
+    if not CHAT_ID:
+        # Get chat ID by sending a message to the user
+        updates = bot.get_updates()
+        if updates:
+            CHAT_ID = updates[-1].message.chat_id
+
+    scheduler = BackgroundScheduler()
+    scheduler.add_job(send_new_jobs, 'interval', minutes=2)
+    scheduler.start()
+
+    updater.start_polling()
+    updater.idle()
+
 if __name__ == "__main__":
-    try:
-        # Scrape Indeed job listings
-        indeed_jobs = scrape_indeed_jobs()
-        
-        # Display the job listings
-        for job in indeed_jobs:
-            print(f"Job Title: {job['title']}")
-            print(f"Company: {job['company']}")
-            print(f"Location: {job['location']}")
-            print(f"Apply Here: {job['apply_link']}")
-            print("-" * 40)
-    
-    except Exception as e:
-        print(f"Error: {e}")
+    print("Bot is starting...")
+    start_bot()
