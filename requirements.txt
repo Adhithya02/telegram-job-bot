@@ -1,4 +1,4 @@
-python-telegram-bot[fastapi]==20.3
+python-telegram-bot==20.3
 fastapi==0.110.0
 uvicorn==0.29.0
 requests

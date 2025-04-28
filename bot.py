@@ -1,70 +1,114 @@
-import os
-import logging
 import requests
 from bs4 import BeautifulSoup
-from fastapi import FastAPI, Request
-from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes
-from contextlib import asynccontextmanager
 
-# Setup
-TOKEN = os.environ["TELEGRAM_TOKEN"]
-WEBHOOK_URL = os.environ["WEBHOOK_URL"]
+# Define URLs to scrape
+IT_JOBS_URL = "https://www.indeed.com/jobs?q=developer&l="
+LINKEDIN_URL = "https://www.linkedin.com/jobs/search/?keywords=developer"
+GENERIC_JOBS_URL = "https://www.example-job-site.com/jobs?q=developer"
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-# Job scraper
-def scrape_indeed_jobs(query="IT", location="Remote", num_results=5):
-    headers = {"User-Agent": "Mozilla/5.0"}
-    search_query = '+'.join(query.split())
-    search_location = '+'.join(location.split())
-    url = f"https://www.indeed.com/jobs?q={search_query}&l={search_location}"
-
-    r = requests.get(url, headers=headers)
-    soup = BeautifulSoup(r.text, "html.parser")
-    cards = soup.find_all("a", class_="tapItem")
-
+# Define a function to scrape Indeed job listings
+def scrape_indeed_jobs():
     jobs = []
-    for card in cards[:num_results]:
-        title = card.find("h2", class_="jobTitle").text.strip()
-        company = card.find("span", class_="companyName").text.strip()
-        location_tag = card.find("div", class_="companyLocation")
-        location = location_tag.text.strip() if location_tag else "N/A"
-        link = "https://www.indeed.com" + card["href"]
-        jobs.append({"title": title, "company": company, "location": location, "url": link})
+    response = requests.get(IT_JOBS_URL)
+    response.raise_for_status()  # Ensure the request was successful
+    
+    soup = BeautifulSoup(response.text, 'html.parser')
+    
+    # Inspect Indeed's HTML and adjust the classes/tags accordingly
+    job_cards = soup.find_all('div', class_='jobsearch-SerpJobCard')  # Indeed job card class
+    for job in job_cards:
+        title = job.find('a', class_='jobtitle')
+        company = job.find('span', class_='company')
+        location = job.find('div', class_='location')
+        apply_link = "https://www.indeed.com" + title['href'] if title else None
+        
+        if title and company and location and apply_link:
+            job_info = {
+                'title': title.get_text(strip=True),
+                'company': company.get_text(strip=True),
+                'location': location.get_text(strip=True),
+                'apply_link': apply_link
+            }
+            jobs.append(job_info)
+    
     return jobs
 
-# Command handler
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("📡 Fetching latest IT jobs...")
-    jobs = scrape_indeed_jobs()
-    for job in jobs:
-        message = (
-            f"*{job['title']}*\n"
-            f"🏢 {job['company']}\n"
-            f"📍 {job['location']}\n"
-            f"🔗 [Apply Here]({job['url']})"
-        )
-        await update.message.reply_text(message, parse_mode="Markdown", disable_web_page_preview=True)
+# Define a function to scrape LinkedIn job listings
+def scrape_linkedin_jobs():
+    jobs = []
+    response = requests.get(LINKEDIN_URL)
+    response.raise_for_status()  # Ensure the request was successful
+    
+    soup = BeautifulSoup(response.text, 'html.parser')
+    
+    # LinkedIn structure might differ, you'll need to find the right tag/class for jobs
+    job_cards = soup.find_all('li', class_='result-card')  # Example class for LinkedIn job cards
+    for job in job_cards:
+        title = job.find('h3', class_='result-card__title')
+        company = job.find('h4', class_='result-card__subtitle')
+        location = job.find('span', class_='job-result-card__location')
+        apply_link = job.find('a', href=True)['href'] if job.find('a', href=True) else None
+        
+        if title and company and location and apply_link:
+            job_info = {
+                'title': title.get_text(strip=True),
+                'company': company.get_text(strip=True),
+                'location': location.get_text(strip=True),
+                'apply_link': apply_link
+            }
+            jobs.append(job_info)
+    
+    return jobs
 
-# Lifespan manager for startup tasks
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    global bot_app
-    bot_app = Application.builder().token(TOKEN).build()
-    bot_app.add_handler(CommandHandler("start", start))
-    await bot_app.bot.set_webhook(url=f"{WEBHOOK_URL}/webhook")
-    yield  # App runs here
-    # (Optional) cleanup actions go here
+# Define a function to scrape a generic IT job site (replace with actual job board URL)
+def scrape_generic_jobs():
+    jobs = []
+    response = requests.get(GENERIC_JOBS_URL)
+    response.raise_for_status()  # Ensure the request was successful
+    
+    soup = BeautifulSoup(response.text, 'html.parser')
+    
+    # Find all job listings based on the structure of the site (adjust class names/tags accordingly)
+    job_cards = soup.find_all('div', class_='job-listing')  # Example class
+    for job in job_cards:
+        title = job.find('h2', class_='job-title')
+        company = job.find('div', class_='company-name')
+        location = job.find('div', class_='job-location')
+        apply_link = job.find('a', href=True)
+        
+        if title and company and location and apply_link:
+            job_info = {
+                'title': title.get_text(strip=True),
+                'company': company.get_text(strip=True),
+                'location': location.get_text(strip=True),
+                'apply_link': apply_link['href']
+            }
+            jobs.append(job_info)
+    
+    return jobs
 
-# FastAPI app with modern lifespan
-app = FastAPI(lifespan=lifespan)
+# Main function to collect and print job listings from all sources
+def get_jobs():
+    print("Scraping Indeed jobs...")
+    indeed_jobs = scrape_indeed_jobs()
+    
+    print("Scraping LinkedIn jobs...")
+    linkedin_jobs = scrape_linkedin_jobs()
+    
+    print("Scraping Generic IT jobs...")
+    generic_jobs = scrape_generic_jobs()
+    
+    # Combine all jobs from different sources
+    all_jobs = indeed_jobs + linkedin_jobs + generic_jobs
+    
+    # Display the job listings
+    for job in all_jobs:
+        print(f"Job Title: {job['title']}")
+        print(f"Company: {job['company']}")
+        print(f"Location: {job['location']}")
+        print(f"Apply Here: {job['apply_link']}")
+        print("-" * 40)
 
-# Webhook route
-@app.post("/webhook")
-async def telegram_webhook(req: Request):
-    data = await req.json()
-    update = Update.de_json(data, bot_app.bot)
-    await bot_app.process_update(update)
-    return {"ok": True}
+# Run the script
+if __name__ == "__main__":
+    get_jobs()
