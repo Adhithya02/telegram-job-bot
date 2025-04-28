@@ -2,19 +2,18 @@ import os
 import requests
 from bs4 import BeautifulSoup
 from telegram import Bot
-from telegram.ext import ApplicationBuilder
-from apscheduler.schedulers.background import BackgroundScheduler
+from telegram.ext import ApplicationBuilder, ContextTypes
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import asyncio
-import nest_asyncio
 
-nest_asyncio.apply()
-
+# Set your environment variables in Railway (TELEGRAM_BOT_TOKEN and CHAT_ID)
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-CHAT_ID = os.getenv("CHAT_ID")
+CHAT_ID = os.getenv("CHAT_ID")  # Should be a string
 
 sent_jobs = set()
 
-def scrape_remoteok():
+# Scrape jobs from RemoteOK
+async def scrape_remoteok():
     url = "https://remoteok.com/remote-it-jobs"
     headers = {"User-Agent": "Mozilla/5.0"}
     response = requests.get(url, headers=headers)
@@ -30,7 +29,8 @@ def scrape_remoteok():
                 jobs.append((job_title, link))
     return jobs
 
-def scrape_wellfound():
+# Scrape jobs from Wellfound
+async def scrape_wellfound():
     url = "https://wellfound.com/jobs"
     headers = {"User-Agent": "Mozilla/5.0"}
     response = requests.get(url, headers=headers)
@@ -44,7 +44,8 @@ def scrape_wellfound():
             jobs.append((job_title, link))
     return jobs
 
-def scrape_weworkremotely():
+# Scrape jobs from WeWorkRemotely
+async def scrape_weworkremotely():
     url = "https://weworkremotely.com/categories/remote-programming-jobs"
     headers = {"User-Agent": "Mozilla/5.0"}
     response = requests.get(url, headers=headers)
@@ -60,9 +61,12 @@ def scrape_weworkremotely():
                 jobs.append((job_title, link))
     return jobs
 
-async def send_new_jobs():
-    bot = Bot(BOT_TOKEN)
-    all_jobs = scrape_remoteok() + scrape_wellfound() + scrape_weworkremotely()
+# Function to send new jobs to Telegram
+async def send_new_jobs(bot: Bot):
+    all_jobs = []
+    all_jobs += await scrape_remoteok()
+    all_jobs += await scrape_wellfound()
+    all_jobs += await scrape_weworkremotely()
 
     for job_title, link in all_jobs:
         unique_id = f"{job_title}_{link}"
@@ -79,24 +83,23 @@ async def send_new_jobs():
             except Exception as e:
                 print(f"Error sending job: {e}")
 
-def start_scheduler(loop):
-    scheduler = BackgroundScheduler()
+# Background scheduler task
+async def scheduled_task(app):
+    await send_new_jobs(app.bot)
 
-    def sync_send_jobs():
-        asyncio.run_coroutine_threadsafe(send_new_jobs(), loop)
+# Main
+async def main():
+    print("Bot is starting...")
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    scheduler.add_job(sync_send_jobs, 'interval', minutes=2)
+    # Start job fetching scheduler
+    scheduler = AsyncIOScheduler()
+    scheduler.add_job(scheduled_task, "interval", minutes=2, args=[app])
     scheduler.start()
     print("Scheduler started...")
 
-async def main():
-    loop = asyncio.get_running_loop()
-    start_scheduler(loop)
-
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
     print("Bot started and polling...")
     await app.run_polling()
 
 if __name__ == "__main__":
-    print("Bot is starting...")
-    asyncio.get_event_loop().run_until_complete(main())
+    asyncio.run(main())
