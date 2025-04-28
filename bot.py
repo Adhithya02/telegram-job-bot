@@ -34,6 +34,17 @@ sent_jobs = set()
 scheduler = None
 subscribed_users = set()
 
+# Target job roles for freshers/entry-level
+TARGET_ROLES = [
+    "developer", "software developer", "web developer", "frontend developer", "backend developer", 
+    "data analyst", "business analyst", "data scientist", "junior data analyst",
+    "tester", "qa tester", "software tester", "test engineer", "qa engineer",
+    "cybersecurity", "security analyst", "information security", "cyber security",
+    "ui designer", "ux designer", "ui/ux designer", "ui ux", "product designer",
+    "junior developer", "graduate developer", "entry level developer",
+    "fresher", "entry level", "junior", "graduate", "trainee"
+]
+
 # Load subscribed users from file
 def load_users():
     global subscribed_users
@@ -56,7 +67,13 @@ def save_users():
     except Exception as e:
         logger.error(f"Error saving users: {e}")
 
-# Google Custom Search API for IT jobs
+# Check if a job matches target roles
+def is_target_job(job_title):
+    job_title_lower = job_title.lower()
+    # Check if any target role is in the job title
+    return any(role in job_title_lower for role in TARGET_ROLES)
+
+# Google Custom Search API for targeted entry-level jobs
 def search_google_jobs():
     try:
         if not GOOGLE_API_KEY or not GOOGLE_CSE_ID:
@@ -65,21 +82,32 @@ def search_google_jobs():
             
         service = build("customsearch", "v1", developerKey=GOOGLE_API_KEY)
         date_str = datetime.now().strftime("%Y-%m-%d")
-        
-        # Search for recent IT job postings
-        result = service.cse().list(
-            q=f"IT jobs {date_str}",
-            cx=GOOGLE_CSE_ID,
-            num=10,
-            dateRestrict="d1"  # Last 24 hours
-        ).execute()
-        
         jobs = []
-        if "items" in result:
-            for item in result["items"]:
-                title = item["title"]
-                link = item["link"]
-                jobs.append((title, link))
+        
+        # Search for each target role separately to get more specific results
+        for role in ["developer fresher", "data analyst entry level", "software tester junior", 
+                    "cybersecurity entry level", "ui ux designer junior"]:
+            try:
+                result = service.cse().list(
+                    q=f"{role} jobs {date_str}",
+                    cx=GOOGLE_CSE_ID,
+                    num=5,  # Get fewer results per role but more variety
+                    dateRestrict="d3"  # Last 3 days for fresher roles which may not update as frequently
+                ).execute()
+                
+                if "items" in result:
+                    for item in result["items"]:
+                        title = item["title"]
+                        link = item["link"]
+                        # Only add jobs that match our target criteria
+                        if is_target_job(title):
+                            jobs.append((title, link))
+                # Add a small delay between API calls
+                asyncio.sleep(0.5)
+            except Exception as role_error:
+                logger.error(f"Error searching Google jobs for role {role}: {role_error}")
+                continue
+                
         return jobs
     except Exception as e:
         logger.error(f"Error searching Google jobs: {e}")
@@ -87,30 +115,50 @@ def search_google_jobs():
 
 def scrape_indeed():
     try:
-        url = "https://www.indeed.com/q-IT-jobs.html"
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept-Language": "en-US,en;q=0.9"
-        }
-        response = requests.get(url, headers=headers, timeout=15)
-        soup = BeautifulSoup(response.text, "html.parser")
         jobs = []
         
-        # Try multiple possible selectors for Indeed's layout
-        job_cards = soup.select("div.job_seen_beacon") or soup.select("div.tapItem")
+        # Search for multiple job types with fresher/entry-level focus
+        search_terms = [
+            "entry+level+developer", "junior+developer", "fresher+developer",
+            "entry+level+data+analyst", "junior+data+analyst",
+            "entry+level+tester", "junior+qa",
+            "entry+level+cybersecurity", "junior+security+analyst",
+            "junior+ui+ux+designer", "entry+level+ui+designer"
+        ]
         
-        for card in job_cards:
-            title_elem = card.select_one("h2.jobTitle") or card.select_one("h2.title")
-            if title_elem:
-                title = title_elem.get_text(strip=True)
-                link_elem = title_elem.find("a")
-                if link_elem and link_elem.has_attr('href'):
-                    job_id = link_elem.get('data-jk') or link_elem.get('id', '').replace('job_', '')
-                    if job_id:
-                        link = f"https://www.indeed.com/viewjob?jk={job_id}"
-                        jobs.append((title, link))
+        for term in search_terms[:3]:  # Limit to avoid too many requests
+            try:
+                url = f"https://www.indeed.com/jobs?q={term}&sort=date"
+                headers = {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    "Accept-Language": "en-US,en;q=0.9"
+                }
+                response = requests.get(url, headers=headers, timeout=15)
+                soup = BeautifulSoup(response.text, "html.parser")
+                
+                # Try multiple possible selectors for Indeed's layout
+                job_cards = soup.select("div.job_seen_beacon") or soup.select("div.tapItem")
+                
+                for card in job_cards:
+                    title_elem = card.select_one("h2.jobTitle") or card.select_one("h2.title")
+                    if title_elem:
+                        title = title_elem.get_text(strip=True)
+                        link_elem = title_elem.find("a")
+                        if link_elem and link_elem.has_attr('href'):
+                            job_id = link_elem.get('data-jk') or link_elem.get('id', '').replace('job_', '')
+                            if job_id:
+                                link = f"https://www.indeed.com/viewjob?jk={job_id}"
+                                # Only add if it matches our target criteria
+                                if is_target_job(title):
+                                    jobs.append((title, link))
+                
+                # Add a delay between requests to avoid rate limiting
+                asyncio.sleep(1)
+            except Exception as term_error:
+                logger.error(f"Error scraping Indeed for term {term}: {term_error}")
+                continue
         
-        logger.info(f"Scraped {len(jobs)} jobs from Indeed")
+        logger.info(f"Scraped {len(jobs)} fresher jobs from Indeed")
         return jobs
     except Exception as e:
         logger.error(f"Error scraping Indeed: {e}")
@@ -118,27 +166,43 @@ def scrape_indeed():
 
 def scrape_linkedin():
     try:
-        url = "https://www.linkedin.com/jobs/search/?keywords=IT"
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept-Language": "en-US,en;q=0.9"
-        }
-        response = requests.get(url, headers=headers, timeout=15)
-        soup = BeautifulSoup(response.text, "html.parser")
         jobs = []
         
-        job_cards = soup.select("div.base-card") or soup.select("li.job-search-card")
-        for card in job_cards:
-            title_elem = card.select_one("h3.base-search-card__title") or card.select_one("h3.job-search-card__title")
-            link_elem = card.select_one("a.base-card__full-link") or card.select_one("a.job-search-card__link")
-            
-            if title_elem and link_elem:
-                title = title_elem.get_text(strip=True)
-                link = link_elem.get('href', '').split('?')[0]  # Remove query params
-                if title and link:
-                    jobs.append((title, link))
+        # Search for multiple job types with entry-level focus
+        search_terms = [
+            "entry-level-developer", "junior-data-analyst", 
+            "entry-level-tester", "entry-level-cybersecurity", 
+            "junior-ui-ux-designer"
+        ]
+        
+        for term in search_terms[:3]:  # Limit to avoid too many requests
+            try:
+                url = f"https://www.linkedin.com/jobs/search/?keywords={term}&f_E=2&sortBy=DD"  # f_E=2 is for entry level
+                headers = {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    "Accept-Language": "en-US,en;q=0.9"
+                }
+                response = requests.get(url, headers=headers, timeout=15)
+                soup = BeautifulSoup(response.text, "html.parser")
+                
+                job_cards = soup.select("div.base-card") or soup.select("li.job-search-card")
+                for card in job_cards:
+                    title_elem = card.select_one("h3.base-search-card__title") or card.select_one("h3.job-search-card__title")
+                    link_elem = card.select_one("a.base-card__full-link") or card.select_one("a.job-search-card__link")
                     
-        logger.info(f"Scraped {len(jobs)} jobs from LinkedIn")
+                    if title_elem and link_elem:
+                        title = title_elem.get_text(strip=True)
+                        link = link_elem.get('href', '').split('?')[0]  # Remove query params
+                        if title and link and is_target_job(title):
+                            jobs.append((title, link))
+                
+                # Add a delay between requests
+                asyncio.sleep(1)
+            except Exception as term_error:
+                logger.error(f"Error scraping LinkedIn for term {term}: {term_error}")
+                continue
+                    
+        logger.info(f"Scraped {len(jobs)} entry-level jobs from LinkedIn")
         return jobs
     except Exception as e:
         logger.error(f"Error scraping LinkedIn: {e}")
@@ -146,30 +210,43 @@ def scrape_linkedin():
 
 def scrape_remoteok():
     try:
-        url = "https://remoteok.com/remote-dev-jobs"
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept-Language": "en-US,en;q=0.9",
-            "Referer": "https://remoteok.com/"
-        }
-        response = requests.get(url, headers=headers, timeout=20)  # Increased timeout
-        soup = BeautifulSoup(response.text, "html.parser")
         jobs = []
         
-        for tr in soup.find_all('tr', class_='job'):
+        # Search for each target role
+        search_terms = ["junior-dev", "entry-dev", "junior-data", "tester", "junior-security", "ui-ux"]
+        
+        for term in search_terms[:3]:  # Limit to avoid too many requests
             try:
-                a_tag = tr.find('a', itemprop='url')
-                if a_tag:
-                    link = "https://remoteok.com" + a_tag['href']
-                    title_tag = tr.find('h2', itemprop='title')
-                    if title_tag:
-                        job_title = title_tag.get_text(strip=True)
-                        jobs.append((job_title, link))
-            except Exception as job_error:
-                logger.error(f"Error parsing RemoteOK job: {job_error}")
+                url = f"https://remoteok.com/remote-{term}-jobs"
+                headers = {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    "Accept-Language": "en-US,en;q=0.9",
+                    "Referer": "https://remoteok.com/"
+                }
+                response = requests.get(url, headers=headers, timeout=20)
+                soup = BeautifulSoup(response.text, "html.parser")
+                
+                for tr in soup.find_all('tr', class_='job'):
+                    try:
+                        a_tag = tr.find('a', itemprop='url')
+                        if a_tag:
+                            link = "https://remoteok.com" + a_tag['href']
+                            title_tag = tr.find('h2', itemprop='title')
+                            if title_tag:
+                                job_title = title_tag.get_text(strip=True)
+                                # Only add if relevant to our target roles
+                                if is_target_job(job_title):
+                                    jobs.append((job_title, link))
+                    except Exception as job_error:
+                        continue
+                
+                # Add a delay between requests
+                asyncio.sleep(1)
+            except Exception as term_error:
+                logger.error(f"Error scraping RemoteOK for term {term}: {term_error}")
                 continue
                 
-        logger.info(f"Scraped {len(jobs)} jobs from RemoteOK")
+        logger.info(f"Scraped {len(jobs)} entry-level jobs from RemoteOK")
         return jobs
     except requests.exceptions.Timeout:
         logger.error("RemoteOK request timed out")
@@ -180,25 +257,106 @@ def scrape_remoteok():
 
 def scrape_stackoverflow():
     try:
-        url = "https://stackoverflow.com/jobs?q=IT"
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        }
-        response = requests.get(url, headers=headers, timeout=15)
-        soup = BeautifulSoup(response.text, "html.parser")
         jobs = []
         
-        for div in soup.select("div.listResults div.-job"):
-            title_elem = div.select_one("h2 a")
-            if title_elem:
-                title = title_elem.get_text(strip=True)
-                link = f"https://stackoverflow.com{title_elem['href']}"
-                jobs.append((title, link))
+        # Search for specific fresher/entry-level job categories
+        search_terms = ["junior developer", "entry level data", "junior tester", 
+                        "entry level security", "junior ui ux"]
+        
+        for term in search_terms[:2]:  # Limit to avoid too many requests
+            try:
+                url = f"https://stackoverflow.com/jobs?q={term.replace(' ', '+')}"
+                headers = {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                }
+                response = requests.get(url, headers=headers, timeout=15)
+                soup = BeautifulSoup(response.text, "html.parser")
                 
-        logger.info(f"Scraped {len(jobs)} jobs from StackOverflow")
+                for div in soup.select("div.listResults div.-job"):
+                    title_elem = div.select_one("h2 a")
+                    if title_elem:
+                        title = title_elem.get_text(strip=True)
+                        link = f"https://stackoverflow.com{title_elem['href']}"
+                        # Only add if it's a target job
+                        if is_target_job(title):
+                            jobs.append((title, link))
+                
+                # Add delay between requests
+                asyncio.sleep(1)
+            except Exception as term_error:
+                logger.error(f"Error scraping StackOverflow for term {term}: {term_error}")
+                continue
+                
+        logger.info(f"Scraped {len(jobs)} fresher jobs from StackOverflow")
         return jobs
     except Exception as e:
         logger.error(f"Error scraping StackOverflow: {e}")
+        return []
+
+# New function to scrape fresher-specific job sites
+def scrape_fresher_job_sites():
+    try:
+        jobs = []
+        
+        # Internshala (popular for freshers in some regions)
+        try:
+            internshala_roles = ["web-development", "data-science", "ui-ux-design", "cyber-security"]
+            for role in internshala_roles[:2]:  # Limit to 2 roles to avoid too many requests
+                url = f"https://internshala.com/internships/{role}/"
+                headers = {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                }
+                response = requests.get(url, headers=headers, timeout=15)
+                soup = BeautifulSoup(response.text, "html.parser")
+                
+                containers = soup.select(".internship_meta")
+                for container in containers:
+                    title_elem = container.select_one("a.view_detail_button")
+                    if title_elem:
+                        company_elem = container.select_one(".company_name")
+                        company = company_elem.get_text(strip=True) if company_elem else "Company"
+                        title = f"{title_elem.get_text(strip=True)} at {company}"
+                        link = "https://internshala.com" + title_elem.get('href', '')
+                        jobs.append((title, link))
+                
+                asyncio.sleep(1)  # Delay between requests
+        except Exception as e:
+            logger.error(f"Error scraping Internshala: {e}")
+            
+        # Freshersworld (specialized in fresher jobs)
+        try:
+            fresher_roles = ["software-developer", "data-analyst", "software-tester", 
+                             "cyber-security", "ui-designer"]
+            for role in fresher_roles[:2]:  # Limit to 2 roles
+                url = f"https://www.freshersworld.com/jobs/search?job={role}"
+                headers = {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                }
+                response = requests.get(url, headers=headers, timeout=15)
+                soup = BeautifulSoup(response.text, "html.parser")
+                
+                job_listings = soup.select(".job-container")
+                for job in job_listings:
+                    title_elem = job.select_one(".job-title")
+                    company_elem = job.select_one(".job-company")
+                    link_elem = job.select_one("a")
+                    
+                    if title_elem and link_elem:
+                        company = company_elem.get_text(strip=True) if company_elem else "Company"
+                        title = f"{title_elem.get_text(strip=True)} - {company}"
+                        link = link_elem.get('href', '')
+                        if not link.startswith('http'):
+                            link = "https://www.freshersworld.com" + link
+                        jobs.append((title, link))
+                
+                asyncio.sleep(1)  # Delay between requests
+        except Exception as e:
+            logger.error(f"Error scraping FreshersWorld: {e}")
+            
+        logger.info(f"Scraped {len(jobs)} jobs from fresher-specific job sites")
+        return jobs
+    except Exception as e:
+        logger.error(f"Error in scrape_fresher_job_sites: {e}")
         return []
 
 async def send_new_jobs():
@@ -215,6 +373,7 @@ async def send_new_jobs():
         all_jobs.extend(scrape_linkedin())
         all_jobs.extend(scrape_remoteok())
         all_jobs.extend(scrape_stackoverflow())
+        all_jobs.extend(scrape_fresher_job_sites())  # Add new fresher-specific sources
         
         # Add Google jobs if API credentials are available
         if GOOGLE_API_KEY and GOOGLE_CSE_ID:
@@ -222,8 +381,12 @@ async def send_new_jobs():
         
         logger.info(f"Total jobs collected: {len(all_jobs)}")
         
+        # Filter to only include target roles
+        filtered_jobs = [(title, link) for title, link in all_jobs if is_target_job(title)]
+        logger.info(f"Filtered to {len(filtered_jobs)} relevant fresher/entry-level jobs")
+        
         new_jobs = []
-        for job_title, link in all_jobs:
+        for job_title, link in filtered_jobs:
             unique_id = f"{job_title}_{link}"
             if unique_id not in sent_jobs:
                 sent_jobs.add(unique_id)
@@ -280,7 +443,7 @@ def start_scheduler(app):
     def sync_send_jobs():
         asyncio.create_task(send_new_jobs())
 
-    scheduler.add_job(sync_send_jobs, 'interval', minutes=1)  # Check every 30 minutes
+    scheduler.add_job(sync_send_jobs, 'interval', minutes=30)  # Check every 30 minutes
     scheduler.start()
     logger.info("Scheduler started...")
 
@@ -292,14 +455,15 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         subscribed_users.add(user_id)
         save_users()
         await update.message.reply_text(
-            'Welcome to the IT Job Alert Bot! 🚀\n\n'
-            'You will now receive IT job updates every 30 minutes.\n\n'
+            'Welcome to the Entry-Level IT Job Alert Bot! 🚀\n\n'
+            'You will now receive entry-level IT job updates for developers, data analysts, testers, '
+            'cybersecurity, and UI/UX designer roles every 30 minutes.\n\n'
             'Type /help to see all available commands.'
         )
     else:
         await update.message.reply_text(
             'You are already subscribed to job alerts! 📝\n'
-            'You will continue to receive job updates every 30 minutes.'
+            'You will continue to receive entry-level IT job updates every 30 minutes.'
         )
 
 async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -316,19 +480,66 @@ async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Send help information when /help command is issued."""
     help_text = """
-*IT Job Alert Bot - Commands*
+*Entry-Level IT Job Alert Bot - Commands*
 
 /start - Subscribe to job alerts
 /stop - Unsubscribe from job alerts
 /help - Show this help message
 /jobs - Check for new jobs now
 /status - Check bot status and subscription info
+/roles - Show job roles we're tracking
 
-The bot automatically checks for new IT jobs every 30 minutes and sends them directly to you.
+The bot automatically checks for new entry-level IT jobs every 30 minutes and sends them directly to you.
 
-Job sources include: Indeed, LinkedIn, RemoteOK, StackOverflow, and Google Jobs.
+We focus on fresher/entry-level roles in:
+• Software Development
+• Data Analysis
+• QA Testing
+• Cybersecurity
+• UI/UX Design
+
+Job sources include: Indeed, LinkedIn, RemoteOK, StackOverflow, Google Jobs, Internshala, and FreshersWorld.
     """
     await update.message.reply_text(help_text, parse_mode='Markdown')
+
+async def roles_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show the job roles that the bot is tracking."""
+    roles_text = """
+*Job Roles We're Tracking:*
+
+*👨‍💻 Developer Roles:*
+• Junior Developer
+• Entry-level Developer
+• Fresher Developer
+• Graduate Developer
+• Web Developer (Frontend/Backend)
+
+*📊 Data Roles:*
+• Junior Data Analyst
+• Entry-level Data Analyst
+• Business Analyst
+• Junior Data Scientist
+
+*🧪 Testing Roles:*
+• Software Tester
+• QA Engineer
+• Test Engineer
+• Junior QA
+
+*🔒 Security Roles:*
+• Junior Security Analyst
+• Entry-level Cybersecurity
+• Information Security
+
+*🎨 Design Roles:*
+• UI Designer
+• UX Designer
+• UI/UX Designer
+• Junior Product Designer
+
+All roles are focused on fresher, entry-level, junior, graduate, and trainee positions.
+    """
+    await update.message.reply_text(roles_text, parse_mode='Markdown')
 
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Check the status of the bot and user subscription."""
@@ -350,6 +561,7 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 Total subscribers: {total_subscribers}
 Jobs in memory: {len(sent_jobs)}
 Update frequency: Every 30 minutes
+Focus: Entry-level IT jobs (Developers, Data, Testing, Security, UI/UX)
     """
     await update.message.reply_text(stats, parse_mode='Markdown')
 
@@ -361,7 +573,7 @@ async def force_job_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text('You need to subscribe first. Use /start to subscribe to job alerts.')
         return
         
-    await update.message.reply_text('Checking for new jobs...')
+    await update.message.reply_text('Checking for fresh entry-level IT jobs...')
     
     # Perform a special check for just this user
     try:
@@ -373,14 +585,18 @@ async def force_job_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
         all_jobs.extend(scrape_linkedin())
         all_jobs.extend(scrape_remoteok())
         all_jobs.extend(scrape_stackoverflow())
+        all_jobs.extend(scrape_fresher_job_sites())  # Add new fresher sources
         
         # Add Google jobs if API credentials are available
         if GOOGLE_API_KEY and GOOGLE_CSE_ID:
             all_jobs.extend(search_google_jobs())
         
-        # Send the 10 most recent jobs to just this user
+        # Filter for target roles only
+        filtered_jobs = [(title, link) for title, link in all_jobs if is_target_job(title)]
+        
+        # Send the 10 most recent relevant jobs to just this user
         jobs_sent = 0
-        sample_jobs = all_jobs[:10]  # Get the 10 most recent jobs
+        sample_jobs = filtered_jobs[:10]  # Get the 10 most recent jobs
         
         for job_title, link in sample_jobs:
             # Add to global sent jobs to avoid duplicates later
@@ -405,9 +621,9 @@ async def force_job_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 logger.error(f"Error sending job to user {user_id}: {e}")
         
         if jobs_sent > 0:
-            await update.message.reply_text(f'Sent you {jobs_sent} recent job listings!')
+            await update.message.reply_text(f'Sent you {jobs_sent} recent entry-level IT job listings!')
         else:
-            await update.message.reply_text('No new jobs found at the moment. Check back later!')
+            await update.message.reply_text('No new entry-level IT jobs found at the moment. Check back later!')
             
     except Exception as e:
         logger.error(f"Error in force job check: {e}")
@@ -426,6 +642,7 @@ async def main():
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("jobs", force_job_check))
     app.add_handler(CommandHandler("status", status_command))
+    app.add_handler(CommandHandler("roles", roles_command))  # New command
     
     # Start the scheduler
     start_scheduler(app)
@@ -439,7 +656,7 @@ async def main():
     await app.run_polling()
 
 if __name__ == "__main__":
-    logger.info("Bot is starting...")
+    logger.info("Entry-Level IT Jobs Bot is starting...")
     try:
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
