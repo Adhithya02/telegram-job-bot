@@ -102,7 +102,7 @@ def search_google_jobs():
                         # Only add jobs that match our target criteria
                         if is_target_job(title):
                             jobs.append((title, link))
-                # Add a small delay between API calls
+                # Add a small delay between API calls - remove await here since this isn't an async function
                 asyncio.sleep(0.5)
             except Exception as role_error:
                 logger.error(f"Error searching Google jobs for role {role}: {role_error}")
@@ -113,7 +113,7 @@ def search_google_jobs():
         logger.error(f"Error searching Google jobs: {e}")
         return []
 
-def scrape_indeed():
+async def scrape_indeed():
     try:
         jobs = []
         
@@ -164,7 +164,7 @@ def scrape_indeed():
         logger.error(f"Error scraping Indeed: {e}")
         return []
 
-def scrape_linkedin():
+async def scrape_linkedin():
     try:
         jobs = []
         
@@ -208,7 +208,7 @@ def scrape_linkedin():
         logger.error(f"Error scraping LinkedIn: {e}")
         return []
 
-def scrape_remoteok():
+async def scrape_remoteok():
     try:
         jobs = []
         
@@ -255,7 +255,7 @@ def scrape_remoteok():
         logger.error(f"Error scraping RemoteOK: {e}")
         return []
 
-def scrape_stackoverflow():
+async def scrape_stackoverflow():
     try:
         jobs = []
         
@@ -294,7 +294,7 @@ def scrape_stackoverflow():
         return []
 
 # New function to scrape fresher-specific job sites
-def scrape_fresher_job_sites():
+async def scrape_fresher_job_sites():
     try:
         jobs = []
         
