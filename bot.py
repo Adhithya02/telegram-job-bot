@@ -104,9 +104,11 @@ async def main():
 
 # Entry point for the script
 if __name__ == "__main__":
-    # Instead of asyncio.run(), directly start the event loop
     try:
-        asyncio.get_event_loop().run_until_complete(main())
+        # Allow the event loop to run without trying to create a new one
+        loop = asyncio.get_event_loop()
+        loop.create_task(main())
+        loop.run_forever()  # Keep the event loop running
     except RuntimeError as e:
         print(f"Error: {e}")
         print("It seems an event loop is already running.")
