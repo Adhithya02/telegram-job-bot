@@ -280,7 +280,7 @@ def start_scheduler(app):
     def sync_send_jobs():
         asyncio.create_task(send_new_jobs())
 
-    scheduler.add_job(sync_send_jobs, 'interval', minutes=30)  # Check every 30 minutes
+    scheduler.add_job(sync_send_jobs, 'interval', minutes=1)  # Check every 30 minutes
     scheduler.start()
     logger.info("Scheduler started...")
 
