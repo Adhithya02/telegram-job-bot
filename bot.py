@@ -5,15 +5,13 @@ from telegram import Bot
 from telegram.ext import ApplicationBuilder
 from apscheduler.schedulers.background import BackgroundScheduler
 import asyncio
+import nest_asyncio
+
+# Apply fix for Railway event loop issue
+nest_asyncio.apply()
 
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
-
-JOB_SITES = [
-    "https://www.indeed.com/q-IT-jobs.html",
-    "https://www.monster.com/jobs/search/?q=IT&where=",
-    "https://remoteok.com/remote-dev-jobs",
-]
 
 sent_jobs = set()
 
@@ -23,12 +21,12 @@ def scrape_indeed():
     response = requests.get(url, headers=headers)
     soup = BeautifulSoup(response.text, "html.parser")
     jobs = []
-    for div in soup.find_all(name="div", attrs={"class":"cardOutline"}):
+    for div in soup.find_all("div", class_="cardOutline"):
         title = div.find("h2")
         if title:
-            link_tag = title.find("a")
-            if link_tag and link_tag.has_attr('href'):
-                link = "https://indeed.com" + link_tag["href"]
+            a_tag = title.find("a")
+            if a_tag and a_tag.has_attr('href'):
+                link = "https://indeed.com" + a_tag['href']
                 job_title = title.get_text(strip=True)
                 jobs.append((job_title, link))
     return jobs
@@ -39,8 +37,8 @@ def scrape_monster():
     response = requests.get(url, headers=headers)
     soup = BeautifulSoup(response.text, "html.parser")
     jobs = []
-    for div in soup.find_all('section', attrs={'class': 'card-content'}):
-        title = div.find('h2', attrs={'class': 'title'})
+    for div in soup.find_all('section', class_='card-content'):
+        title = div.find('h2', class_='title')
         if title and title.a:
             link = title.a['href']
             job_title = title.text.strip()
@@ -53,11 +51,11 @@ def scrape_remoteok():
     response = requests.get(url, headers=headers)
     soup = BeautifulSoup(response.text, "html.parser")
     jobs = []
-    for tr in soup.find_all('tr', {'class': 'job'}):
-        a_tag = tr.find('a', {'itemprop': 'url'})
+    for tr in soup.find_all('tr', class_='job'):
+        a_tag = tr.find('a', itemprop='url')
         if a_tag:
             link = "https://remoteok.com" + a_tag['href']
-            title_tag = tr.find('h2', {'itemprop': 'title'})
+            title_tag = tr.find('h2', itemprop='title')
             if title_tag:
                 job_title = title_tag.get_text(strip=True)
                 jobs.append((job_title, link))
@@ -70,7 +68,7 @@ async def send_new_jobs():
         unique_id = f"{job_title}_{link}"
         if unique_id not in sent_jobs:
             sent_jobs.add(unique_id)
-            message = f"💼 *{job_title}*\n🔗 [Apply Here]({link})"
+            message = f"💼 *{job_title}*\\n🔗 [Apply Here]({link})"
             try:
                 await bot.send_message(
                     chat_id=CHAT_ID,
@@ -83,7 +81,7 @@ async def send_new_jobs():
 
 def start_scheduler():
     scheduler = BackgroundScheduler()
-    scheduler.add_job(lambda: asyncio.run(send_new_jobs()), 'interval', minutes=2)
+    scheduler.add_job(lambda: asyncio.create_task(send_new_jobs()), 'interval', minutes=2)
     scheduler.start()
     print("Scheduler started...")
 
@@ -103,4 +101,4 @@ async def main():
 
 if __name__ == "__main__":
     print("Bot is starting...")
-    asyncio.run(main())
+    asyncio.get_event_loop().run_until_complete(main())
