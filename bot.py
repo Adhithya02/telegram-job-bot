@@ -153,7 +153,7 @@ def scrape_indeed():
                                     jobs.append((title, link))
                 
                 # Add a delay between requests to avoid rate limiting
-                asyncio.sleep(1)
+                await asyncio.sleep(1)
             except Exception as term_error:
                 logger.error(f"Error scraping Indeed for term {term}: {term_error}")
                 continue
@@ -197,7 +197,7 @@ def scrape_linkedin():
                             jobs.append((title, link))
                 
                 # Add a delay between requests
-                asyncio.sleep(1)
+                await asyncio.sleep(1)
             except Exception as term_error:
                 logger.error(f"Error scraping LinkedIn for term {term}: {term_error}")
                 continue
@@ -241,7 +241,7 @@ def scrape_remoteok():
                         continue
                 
                 # Add a delay between requests
-                asyncio.sleep(1)
+                await asyncio.sleep(1)
             except Exception as term_error:
                 logger.error(f"Error scraping RemoteOK for term {term}: {term_error}")
                 continue
@@ -282,7 +282,7 @@ def scrape_stackoverflow():
                             jobs.append((title, link))
                 
                 # Add delay between requests
-                asyncio.sleep(1)
+                await asyncio.sleep(1)
             except Exception as term_error:
                 logger.error(f"Error scraping StackOverflow for term {term}: {term_error}")
                 continue
@@ -319,7 +319,7 @@ def scrape_fresher_job_sites():
                         link = "https://internshala.com" + title_elem.get('href', '')
                         jobs.append((title, link))
                 
-                asyncio.sleep(1)  # Delay between requests
+                await asyncio.sleep(1)  # Delay between requests
         except Exception as e:
             logger.error(f"Error scraping Internshala: {e}")
             
@@ -349,7 +349,7 @@ def scrape_fresher_job_sites():
                             link = "https://www.freshersworld.com" + link
                         jobs.append((title, link))
                 
-                asyncio.sleep(1)  # Delay between requests
+                await asyncio.sleep(1)  # Delay between requests
         except Exception as e:
             logger.error(f"Error scraping FreshersWorld: {e}")
             
@@ -359,43 +359,61 @@ def scrape_fresher_job_sites():
         logger.error(f"Error in scrape_fresher_job_sites: {e}")
         return []
 
-async def send_new_jobs():
+# Function to update job sources every minute (one source per minute)
+# This prevents hitting all sources at once and getting rate-limited
+async def check_job_source(source_name):
+    logger.info(f"Checking job source: {source_name}")
+    jobs = []
+    
+    if source_name == "indeed":
+        jobs = await scrape_indeed()
+    elif source_name == "linkedin":
+        jobs = await scrape_linkedin()
+    elif source_name == "remoteok":
+        jobs = await scrape_remoteok()
+    elif source_name == "stackoverflow":
+        jobs = await scrape_stackoverflow()
+    elif source_name == "fresher_sites":
+        jobs = await scrape_fresher_job_sites()
+    elif source_name == "google":
+        if GOOGLE_API_KEY and GOOGLE_CSE_ID:
+            jobs = search_google_jobs()
+            
+    if jobs:
+        await send_jobs_to_users(jobs)
+        
+def rotate_job_sources():
+    # List of sources to check one at a time
+    sources = ["indeed", "linkedin", "remoteok", "stackoverflow", "fresher_sites", "google"]
+    current_index = 0
+    
+    def get_next_source():
+        nonlocal current_index
+        source = sources[current_index]
+        current_index = (current_index + 1) % len(sources)
+        return source
+    
+    return get_next_source
+
+async def send_jobs_to_users(jobs):
     try:
-        if not subscribed_users:
-            logger.info("No subscribed users to send jobs to")
+        if not subscribed_users or not jobs:
             return
             
         bot = Bot(BOT_TOKEN)
         
-        # Collect jobs from all sources
-        all_jobs = []
-        all_jobs.extend(scrape_indeed())
-        all_jobs.extend(scrape_linkedin())
-        all_jobs.extend(scrape_remoteok())
-        all_jobs.extend(scrape_stackoverflow())
-        all_jobs.extend(scrape_fresher_job_sites())  # Add new fresher-specific sources
-        
-        # Add Google jobs if API credentials are available
-        if GOOGLE_API_KEY and GOOGLE_CSE_ID:
-            all_jobs.extend(search_google_jobs())
-        
-        logger.info(f"Total jobs collected: {len(all_jobs)}")
-        
-        # Filter to only include target roles
-        filtered_jobs = [(title, link) for title, link in all_jobs if is_target_job(title)]
-        logger.info(f"Filtered to {len(filtered_jobs)} relevant fresher/entry-level jobs")
-        
+        # Filter to only include target roles and new jobs
         new_jobs = []
-        for job_title, link in filtered_jobs:
-            unique_id = f"{job_title}_{link}"
-            if unique_id not in sent_jobs:
-                sent_jobs.add(unique_id)
-                # Clean job title of any special characters that might break Markdown
-                job_title = job_title.replace("*", "").replace("_", "").replace("`", "").replace("[", "").replace("]", "")
-                new_jobs.append((job_title, link))
+        for job_title, link in jobs:
+            if is_target_job(job_title):
+                unique_id = f"{job_title}_{link}"
+                if unique_id not in sent_jobs:
+                    sent_jobs.add(unique_id)
+                    # Clean job title of any special characters that might break Markdown
+                    job_title = job_title.replace("*", "").replace("_", "").replace("`", "").replace("[", "").replace("]", "")
+                    new_jobs.append((job_title, link))
         
         if not new_jobs:
-            logger.info("No new jobs to send")
             return
             
         logger.info(f"Found {len(new_jobs)} new jobs to send to {len(subscribed_users)} users")
@@ -430,7 +448,7 @@ async def send_new_jobs():
                 logger.error(f"Error processing user {user_id}: {user_error}")
                 
     except Exception as e:
-        logger.error(f"Error in send_new_jobs: {e}")
+        logger.error(f"Error in send_jobs_to_users: {e}")
 
 def start_scheduler(app):
     global scheduler
@@ -439,13 +457,17 @@ def start_scheduler(app):
         scheduler.shutdown(wait=False)
     
     scheduler = BackgroundScheduler()
+    get_next_source = rotate_job_sources()
 
-    def sync_send_jobs():
-        asyncio.create_task(send_new_jobs())
+    # Function that runs every minute to check one job source at a time
+    def check_next_source():
+        source = get_next_source()
+        asyncio.create_task(check_job_source(source))
 
-    scheduler.add_job(sync_send_jobs, 'interval', minutes=30)  # Check every 30 minutes
+    # Run every minute
+    scheduler.add_job(check_next_source, 'interval', minutes=1)
     scheduler.start()
-    logger.info("Scheduler started...")
+    logger.info("Scheduler started - checking one job source every minute...")
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Subscribe a user when they use the /start command."""
@@ -457,13 +479,13 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             'Welcome to the Entry-Level IT Job Alert Bot! 🚀\n\n'
             'You will now receive entry-level IT job updates for developers, data analysts, testers, '
-            'cybersecurity, and UI/UX designer roles every 30 minutes.\n\n'
+            'cybersecurity, and UI/UX designer roles every minute.\n\n'
             'Type /help to see all available commands.'
         )
     else:
         await update.message.reply_text(
             'You are already subscribed to job alerts! 📝\n'
-            'You will continue to receive entry-level IT job updates every 30 minutes.'
+            'You will continue to receive entry-level IT job updates every minute.'
         )
 
 async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -489,7 +511,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /status - Check bot status and subscription info
 /roles - Show job roles we're tracking
 
-The bot automatically checks for new entry-level IT jobs every 30 minutes and sends them directly to you.
+The bot automatically checks for new entry-level IT jobs every minute and sends them directly to you.
 
 We focus on fresher/entry-level roles in:
 • Software Development
@@ -560,7 +582,7 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 {subscription_status} to job alerts
 Total subscribers: {total_subscribers}
 Jobs in memory: {len(sent_jobs)}
-Update frequency: Every 30 minutes
+Update frequency: Every minute (one source at a time)
 Focus: Entry-level IT jobs (Developers, Data, Testing, Security, UI/UX)
     """
     await update.message.reply_text(stats, parse_mode='Markdown')
@@ -579,13 +601,13 @@ async def force_job_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         bot = Bot(BOT_TOKEN)
         
-        # Collect jobs from all sources
+        # Collect jobs from all sources (using await for async functions)
         all_jobs = []
-        all_jobs.extend(scrape_indeed())
-        all_jobs.extend(scrape_linkedin())
-        all_jobs.extend(scrape_remoteok())
-        all_jobs.extend(scrape_stackoverflow())
-        all_jobs.extend(scrape_fresher_job_sites())  # Add new fresher sources
+        all_jobs.extend(await scrape_indeed())
+        all_jobs.extend(await scrape_linkedin())
+        all_jobs.extend(await scrape_remoteok())
+        all_jobs.extend(await scrape_stackoverflow())
+        all_jobs.extend(await scrape_fresher_job_sites())
         
         # Add Google jobs if API credentials are available
         if GOOGLE_API_KEY and GOOGLE_CSE_ID:
@@ -594,11 +616,13 @@ async def force_job_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Filter for target roles only
         filtered_jobs = [(title, link) for title, link in all_jobs if is_target_job(title)]
         
-        # Send the 10 most recent relevant jobs to just this user
-        jobs_sent = 0
-        sample_jobs = filtered_jobs[:10]  # Get the 10 most recent jobs
+        # Get all relevant jobs, not just 10
+        jobs_to_send = filtered_jobs
         
-        for job_title, link in sample_jobs:
+        # Send all filtered jobs to this specific user
+        jobs_sent = 0
+        
+        for job_title, link in jobs_to_send:
             # Add to global sent jobs to avoid duplicates later
             unique_id = f"{job_title}_{link}"
             sent_jobs.add(unique_id)
@@ -642,14 +666,10 @@ async def main():
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("jobs", force_job_check))
     app.add_handler(CommandHandler("status", status_command))
-    app.add_handler(CommandHandler("roles", roles_command))  # New command
+    app.add_handler(CommandHandler("roles", roles_command))
     
     # Start the scheduler
     start_scheduler(app)
-    
-    # Run initial job check if there are subscribed users
-    if subscribed_users:
-        asyncio.create_task(send_new_jobs())
     
     # Run the bot
     logger.info(f"Bot started and polling with {len(subscribed_users)} subscribed users")
