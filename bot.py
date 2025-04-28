@@ -14,8 +14,6 @@ CHAT_ID = os.getenv("CHAT_ID")
 
 sent_jobs = set()
 
-# SCRAPERS:
-
 def scrape_remoteok():
     url = "https://remoteok.com/remote-it-jobs"
     headers = {"User-Agent": "Mozilla/5.0"}
@@ -92,15 +90,6 @@ def start_scheduler(loop):
     print("Scheduler started...")
 
 async def main():
-    global CHAT_ID
-    bot = Bot(BOT_TOKEN)
-
-    if not CHAT_ID:
-        updates = await bot.get_updates()
-        if updates:
-            CHAT_ID = updates[-1].message.chat_id
-            print(f"Detected CHAT_ID automatically: {CHAT_ID}")
-
     loop = asyncio.get_running_loop()
     start_scheduler(loop)
 
