@@ -6,11 +6,9 @@ from telegram.ext import ApplicationBuilder
 from apscheduler.schedulers.background import BackgroundScheduler
 import asyncio
 
-# Load environment variables
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-CHAT_ID = os.getenv("CHAT_ID")  # Can be empty at start
+CHAT_ID = os.getenv("CHAT_ID")
 
-# Websites to scrape
 JOB_SITES = [
     "https://www.indeed.com/q-IT-jobs.html",
     "https://www.monster.com/jobs/search/?q=IT&where=",
@@ -25,7 +23,6 @@ def scrape_indeed():
     response = requests.get(url, headers=headers)
     soup = BeautifulSoup(response.text, "html.parser")
     jobs = []
-
     for div in soup.find_all(name="div", attrs={"class":"cardOutline"}):
         title = div.find("h2")
         if title:
@@ -42,7 +39,6 @@ def scrape_monster():
     response = requests.get(url, headers=headers)
     soup = BeautifulSoup(response.text, "html.parser")
     jobs = []
-
     for div in soup.find_all('section', attrs={'class': 'card-content'}):
         title = div.find('h2', attrs={'class': 'title'})
         if title and title.a:
@@ -57,7 +53,6 @@ def scrape_remoteok():
     response = requests.get(url, headers=headers)
     soup = BeautifulSoup(response.text, "html.parser")
     jobs = []
-
     for tr in soup.find_all('tr', {'class': 'job'}):
         a_tag = tr.find('a', {'itemprop': 'url'})
         if a_tag:
@@ -70,9 +65,7 @@ def scrape_remoteok():
 
 async def send_new_jobs():
     bot = Bot(BOT_TOKEN)
-
     all_jobs = scrape_indeed() + scrape_monster() + scrape_remoteok()
-
     for job_title, link in all_jobs:
         unique_id = f"{job_title}_{link}"
         if unique_id not in sent_jobs:
@@ -96,9 +89,7 @@ def start_scheduler():
 
 async def main():
     global CHAT_ID
-
     bot = Bot(BOT_TOKEN)
-
     if not CHAT_ID:
         updates = await bot.get_updates()
         if updates:
@@ -106,9 +97,7 @@ async def main():
             print(f"Detected CHAT_ID automatically: {CHAT_ID}")
 
     start_scheduler()
-
     app = ApplicationBuilder().token(BOT_TOKEN).build()
-
     print("Bot started and polling...")
     await app.run_polling()
 
