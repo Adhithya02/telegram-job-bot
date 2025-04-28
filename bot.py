@@ -1,56 +1,54 @@
-import os
+from telegram.ext import ApplicationBuilder, CommandHandler
+from telegram import Update
 import logging
+import os
 import requests
 from bs4 import BeautifulSoup
-from telegram import Update
-from telegram.ext import Application, CommandHandler
+from fastapi import FastAPI
+from telegram.ext import Application
+from telegram.ext.webhook import WebhookServer
 
-# Logging setup
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+TOKEN = os.environ.get("TELEGRAM_TOKEN")
+WEBHOOK_URL = os.environ.get("WEBHOOK_URL")  # Add this in Railway too!
+
+# Logging
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Load bot token from environment
-TOKEN = os.environ.get("TELEGRAM_TOKEN")
+app = FastAPI()
 
-# Scrape jobs from Indeed
+# Scraping function
 def scrape_indeed_jobs(query="IT", location="Remote", num_results=5):
-    try:
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-        }
+    headers = {
+        "User-Agent": "Mozilla/5.0"
+    }
+    search_query = '+'.join(query.split())
+    search_location = '+'.join(location.split())
+    url = f"https://www.indeed.com/jobs?q={search_query}&l={search_location}"
 
-        search_query = '+'.join(query.split())
-        search_location = '+'.join(location.split())
-        url = f"https://www.indeed.com/jobs?q={search_query}&l={search_location}"
+    r = requests.get(url, headers=headers)
+    soup = BeautifulSoup(r.text, 'html.parser')
+    cards = soup.find_all('a', class_='tapItem')
 
-        response = requests.get(url, headers=headers)
-        soup = BeautifulSoup(response.text, 'html.parser')
-        cards = soup.find_all('a', class_='tapItem')
+    jobs = []
+    for card in cards[:num_results]:
+        title = card.find('h2', class_='jobTitle').text.strip()
+        company = card.find('span', class_='companyName').text.strip()
+        location_tag = card.find('div', class_='companyLocation')
+        location = location_tag.text.strip() if location_tag else "N/A"
+        link = "https://www.indeed.com" + card['href']
+        jobs.append({
+            "title": title,
+            "company": company,
+            "location": location,
+            "url": link
+        })
+    return jobs
 
-        jobs = []
-        for card in cards[:num_results]:
-            title = card.find('h2', class_='jobTitle').text.strip()
-            company = card.find('span', class_='companyName').text.strip()
-            location_tag = card.find('div', class_='companyLocation')
-            location = location_tag.text.strip() if location_tag else "N/A"
-            link = "https://www.indeed.com" + card['href']
-            jobs.append({
-                "title": title,
-                "company": company,
-                "location": location,
-                "url": link
-            })
-        return jobs
-    except Exception as e:
-        logger.error(f"Scraping error: {e}")
-        return []
-
-# Handle /start command
+# Bot command
 async def start(update: Update, context):
-    await update.message.reply_text("Welcome to JobSearchBot! Fetching latest *IT jobs*...", parse_mode="Markdown")
-
+    await update.message.reply_text("Welcome! Fetching latest IT jobs...")
     jobs = scrape_indeed_jobs()
-
     if jobs:
         for job in jobs:
             text = (
@@ -60,14 +58,17 @@ async def start(update: Update, context):
                 f"🔗 [Apply Here]({job['url']})"
             )
             await update.message.reply_text(text, parse_mode="Markdown", disable_web_page_preview=True)
-    else:
-        await update.message.reply_text("❌ No jobs found at the moment.")
 
-# Main function to start bot
-def main():
-    application = Application.builder().token(TOKEN).build()
+# Start application with webhook
+@app.on_event("startup")
+async def startup():
+    application = ApplicationBuilder().token(TOKEN).build()
     application.add_handler(CommandHandler("start", start))
-    application.run_polling()
 
-if __name__ == "__main__":
-    main()
+    # Set Telegram webhook
+    await application.bot.set_webhook(url=f"{WEBHOOK_URL}/webhook")
+
+    # Start webhook server
+    webhook_server = WebhookServer(application=application, path="/webhook", app=app)
+    await webhook_server.run()
+
