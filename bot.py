@@ -42,7 +42,13 @@ RECENCY_THRESHOLD_DAYS = 7
 
 # Target job roles for freshers/entry-level
 TARGET_ROLES = [
-   ""
+    "developer", "software developer", "web developer", "frontend developer", "backend developer", 
+    "data analyst", "business analyst", "data scientist", "junior data analyst",
+    "tester", "qa tester", "software tester", "test engineer", "qa engineer",
+    "cybersecurity", "security analyst", "information security", "cyber security",
+    "ui designer", "ux designer", "ui/ux designer", "ui ux", "product designer",
+    "junior developer", "graduate developer", "entry level developer",
+    "fresher", "entry level", "junior", "graduate", "trainee"
 ]
 
 # Load subscribed users from file
@@ -126,7 +132,12 @@ def is_recent_job(job_id, job_date=None):
         try:
             # Try to parse various date formats
             date_patterns = [
-             ""
+                r'(\d{1,2}\s+\w+\s+\d{4})',  # 15 April 2023
+                r'(\d{1,2}\s+\w+)',  # 15 April
+                r'(\w+\s+\d{1,2})',  # April 15
+                r'(\d{1,2}/\d{1,2}/\d{2,4})',  # 04/15/2023
+                r'(\d{1,2}-\d{1,2}-\d{2,4})',  # 04-15-2023
+                r'(today|yesterday|just now|\d+\s+(?:hour|hr|day|week)s?\s+ago)'  # Relative time
             ]
             
             found_date = None
@@ -182,7 +193,9 @@ def search_google_jobs():
         
         # Search with date restrictions for recent jobs
         search_queries = [
-           ""
+            "developer fresher", "data analyst entry level", 
+            "software tester junior", "cybersecurity entry level", 
+            "ui ux designer junior"
         ]
         
         for role in search_queries:
@@ -228,7 +241,11 @@ async def scrape_indeed():
         
         # Search for multiple job types with fresher/entry-level focus and date filter
         search_terms = [
-        ""
+            "entry+level+developer", "junior+developer", "fresher+developer",
+            "entry+level+data+analyst", "junior+data+analyst",
+            "entry+level+tester", "junior+qa",
+            "entry+level+cybersecurity", "junior+security+analyst",
+            "junior+ui+ux+designer", "entry+level+ui+designer"
         ]
         
         for term in search_terms[:3]:  # Limit to avoid too many requests
