@@ -798,6 +798,7 @@ async def scheduled_job_check():
     except Exception as e:
         logger.error(f"Error in scheduled job check: {e}")
 
+
 # Main function to set up the bot
 async def main():
     global scheduler, next_source
@@ -812,13 +813,11 @@ async def main():
     # Start scheduler
     scheduler = BackgroundScheduler()
     
-    # Schedule job checks every 3 minutes (using different sources in rotation)
-    # This means each source is checked roughly every 18 minutes (with 6 sources)
-    # But users get new job updates every 3 minutes
+    # Schedule job checks every minute
     scheduler.add_job(
         lambda: asyncio.create_task(scheduled_job_check()),
         'interval',
-        minutes=1,  # Decreased from 3 to 1 minute for more frequent updates
+        minutes=1,  # Check every minute for more frequent updates
         id='job_check'
     )
     
@@ -844,20 +843,14 @@ async def main():
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("check", check_now))
     
-    # Start the bot
+    # Start the bot - using the correct method for newer python-telegram-bot versions
     await application.initialize()
-    await application.start_polling()
+    await application.start()
     logger.info("Bot started polling")
     
-    # Keep the main function running
-    try:
-        await application.updater.start_polling()
-    except Exception as e:
-        logger.error(f"Error in main polling: {e}")
-    
-    # Run the bot until the user presses Ctrl-C
-    await application.start()
-    await application.updater.stop()
+    # Run until user interrupts with Ctrl+C
+    await application.updater.start_polling()
+    await application.idle()
 
 # Entry point
 if __name__ == "__main__":
@@ -873,7 +866,7 @@ if __name__ == "__main__":
         if scheduler and scheduler.running:
             scheduler.shutdown()
     except Exception as e:
-        logger.error(f"Error in main: {e}")
+        logger.error(f"Error in main: {e}", exc_info=True)  # Added exc_info=True for better error logs
         # Ensure scheduler is shutdown
         if scheduler and scheduler.running:
             scheduler.shutdown()
