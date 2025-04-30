@@ -7,15 +7,13 @@ from apscheduler.schedulers.background import BackgroundScheduler
 import asyncio
 import nest_asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 from googleapiclient.discovery import build
+import re
 
 # Configure logging
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Apply Railway event loop fix
@@ -24,7 +22,7 @@ nest_asyncio.apply()
 # Environment variables
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
-GOOGLE_CSE_ID = os.getenv("GOOGLE_CSE_ID")  # Custom Search Engine ID
+GOOGLE_CSE_ID = os.getenv("GOOGLE_CSE_ID")
 
 # File to store user data
 USERS_FILE = "users.json"
@@ -70,42 +68,86 @@ def save_users():
 # Check if a job matches target roles
 def is_target_job(job_title):
     job_title_lower = job_title.lower()
-    # Check if any target role is in the job title
     return any(role in job_title_lower for role in TARGET_ROLES)
 
-# Google Custom Search API for targeted entry-level jobs
+# Check if a job posting is recent (within the last 7 days)
+def is_recent_job(date_str=None):
+    if not date_str:
+        return True  # If no date, assume it's recent
+        
+    try:
+        # Try to parse common date formats
+        date_formats = [
+            "%Y-%m-%d", "%d-%m-%Y", "%m-%d-%Y", "%d/%m/%Y", "%m/%d/%Y",
+            "%b %d, %Y", "%B %d, %Y", "%d %b %Y", "%d %B %Y"
+        ]
+        
+        for fmt in date_formats:
+            try:
+                job_date = datetime.strptime(date_str, fmt)
+                break
+            except ValueError:
+                continue
+        else:
+            # Check for relative dates like "2 days ago", "yesterday", etc.
+            if "today" in date_str.lower() or "just now" in date_str.lower():
+                return True
+            elif "yesterday" in date_str.lower():
+                return True
+            elif "ago" in date_str.lower():
+                # Extract the number and unit from string like "3 days ago"
+                match = re.search(r'(\d+)\s+(day|hour|minute|second|week)s?\s+ago', date_str.lower())
+                if match:
+                    num, unit = int(match.group(1)), match.group(2)
+                    if unit == "week" and num <= 1:
+                        return True
+                    elif unit in ["day", "hour", "minute", "second"]:
+                        return True
+                return False
+            else:
+                return True  # If we can't parse the date, assume it's recent
+                
+        # Check if date is within the last 7 days
+        return (datetime.now() - job_date).days <= 7
+    except Exception:
+        return True  # If any error, assume job is recent
+
+# Google Custom Search API for recent entry-level jobs
 def search_google_jobs():
     try:
         if not GOOGLE_API_KEY or not GOOGLE_CSE_ID:
-            logger.warning("Google API credentials not set, skipping Google job search")
             return []
             
         service = build("customsearch", "v1", developerKey=GOOGLE_API_KEY)
-        date_str = datetime.now().strftime("%Y-%m-%d")
+        current_date = datetime.now()
         jobs = []
         
-        # Search for each target role separately to get more specific results
-        for role in ["developer fresher", "data analyst entry level", "software tester junior", 
-                    "cybersecurity entry level", "ui ux designer junior"]:
+        # Focus on very recent jobs
+        search_queries = [
+            "entry level developer jobs", 
+            "junior data analyst jobs", 
+            "junior software tester jobs",
+            "entry level cybersecurity jobs", 
+            "junior ui ux designer jobs"
+        ]
+        
+        for query in search_queries[:2]:  # Limit to 2 queries
             try:
                 result = service.cse().list(
-                    q=f"{role} jobs {date_str}",
+                    q=f"{query} posted today this week",
                     cx=GOOGLE_CSE_ID,
-                    num=5,  # Get fewer results per role but more variety
-                    dateRestrict="d3"  # Last 3 days for fresher roles which may not update as frequently
+                    num=5,
+                    dateRestrict="d7"  # Last 7 days
                 ).execute()
                 
                 if "items" in result:
                     for item in result["items"]:
                         title = item["title"]
                         link = item["link"]
-                        # Only add jobs that match our target criteria
                         if is_target_job(title):
-                            jobs.append((title, link))
-                # Add a small delay between API calls - remove await here since this isn't an async function
-                asyncio.sleep(0.5)
-            except Exception as role_error:
-                logger.error(f"Error searching Google jobs for role {role}: {role_error}")
+                            jobs.append((title, link, "Recent"))
+            except Exception as e:
+                logger.error(f"Error in Google search: {e}")
                 continue
                 
         return jobs
@@ -116,71 +158,65 @@ def search_google_jobs():
 async def scrape_indeed():
     try:
         jobs = []
-        
-        # Search for multiple job types with fresher/entry-level focus
         search_terms = [
-            "entry+level+developer", "junior+developer", "fresher+developer",
-            "entry+level+data+analyst", "junior+data+analyst",
-            "entry+level+tester", "junior+qa",
-            "entry+level+cybersecurity", "junior+security+analyst",
-            "junior+ui+ux+designer", "entry+level+ui+designer"
+            "entry+level+developer", "junior+developer", 
+            "entry+level+data+analyst", "entry+level+tester"
         ]
         
-        for term in search_terms[:3]:  # Limit to avoid too many requests
+        for term in search_terms[:2]:  # Limit to avoid too many requests
             try:
-                url = f"https://www.indeed.com/jobs?q={term}&sort=date"
+                # Add date filter to URL
+                url = f"https://www.indeed.com/jobs?q={term}&sort=date&fromage=7"  # Jobs from last 7 days
                 headers = {
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                    "Accept-Language": "en-US,en;q=0.9"
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
                 }
                 response = requests.get(url, headers=headers, timeout=15)
                 soup = BeautifulSoup(response.text, "html.parser")
                 
-                # Try multiple possible selectors for Indeed's layout
                 job_cards = soup.select("div.job_seen_beacon") or soup.select("div.tapItem")
                 
                 for card in job_cards:
                     title_elem = card.select_one("h2.jobTitle") or card.select_one("h2.title")
+                    date_elem = card.select_one("span.date") or card.select_one(".date")
+                    
                     if title_elem:
                         title = title_elem.get_text(strip=True)
+                        
+                        # Extract date if available
+                        post_date = date_elem.get_text(strip=True) if date_elem else "Recent"
+                        
                         link_elem = title_elem.find("a")
                         if link_elem and link_elem.has_attr('href'):
                             job_id = link_elem.get('data-jk') or link_elem.get('id', '').replace('job_', '')
                             if job_id:
                                 link = f"https://www.indeed.com/viewjob?jk={job_id}"
-                                # Only add if it matches our target criteria
-                                if is_target_job(title):
-                                    jobs.append((title, link))
+                                if is_target_job(title) and is_recent_job(post_date):
+                                    jobs.append((title, link, post_date))
                 
-                # Add a delay between requests to avoid rate limiting
                 await asyncio.sleep(1)
-            except Exception as term_error:
-                logger.error(f"Error scraping Indeed for term {term}: {term_error}")
+            except Exception as e:
+                logger.error(f"Error scraping Indeed: {e}")
                 continue
         
-        logger.info(f"Scraped {len(jobs)} fresher jobs from Indeed")
         return jobs
     except Exception as e:
-        logger.error(f"Error scraping Indeed: {e}")
+        logger.error(f"Error in Indeed scraper: {e}")
         return []
 
 async def scrape_linkedin():
     try:
         jobs = []
-        
-        # Search for multiple job types with entry-level focus
         search_terms = [
             "entry-level-developer", "junior-data-analyst", 
-            "entry-level-tester", "entry-level-cybersecurity", 
-            "junior-ui-ux-designer"
+            "entry-level-tester", "junior-ui-ux-designer"
         ]
         
-        for term in search_terms[:3]:  # Limit to avoid too many requests
+        for term in search_terms[:2]:
             try:
-                url = f"https://www.linkedin.com/jobs/search/?keywords={term}&f_E=2&sortBy=DD"  # f_E=2 is for entry level
+                # Use LinkedIn's date filter parameter
+                url = f"https://www.linkedin.com/jobs/search/?keywords={term}&f_E=2&f_TPR=r604800&sortBy=DD"  # f_E=2 is entry level, f_TPR=r604800 is past week
                 headers = {
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                    "Accept-Language": "en-US,en;q=0.9"
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
                 }
                 response = requests.get(url, headers=headers, timeout=15)
                 soup = BeautifulSoup(response.text, "html.parser")
@@ -188,40 +224,37 @@ async def scrape_linkedin():
                 job_cards = soup.select("div.base-card") or soup.select("li.job-search-card")
                 for card in job_cards:
                     title_elem = card.select_one("h3.base-search-card__title") or card.select_one("h3.job-search-card__title")
+                    date_elem = card.select_one("time") or card.select_one(".job-search-card__listdate")
                     link_elem = card.select_one("a.base-card__full-link") or card.select_one("a.job-search-card__link")
                     
                     if title_elem and link_elem:
                         title = title_elem.get_text(strip=True)
-                        link = link_elem.get('href', '').split('?')[0]  # Remove query params
-                        if title and link and is_target_job(title):
-                            jobs.append((title, link))
+                        post_date = date_elem.get_text(strip=True) if date_elem else "Recent"
+                        link = link_elem.get('href', '').split('?')[0]
+                        
+                        if title and link and is_target_job(title) and is_recent_job(post_date):
+                            jobs.append((title, link, post_date))
                 
-                # Add a delay between requests
                 await asyncio.sleep(1)
-            except Exception as term_error:
-                logger.error(f"Error scraping LinkedIn for term {term}: {term_error}")
+            except Exception as e:
+                logger.error(f"Error scraping LinkedIn: {e}")
                 continue
                     
-        logger.info(f"Scraped {len(jobs)} entry-level jobs from LinkedIn")
         return jobs
     except Exception as e:
-        logger.error(f"Error scraping LinkedIn: {e}")
+        logger.error(f"Error in LinkedIn scraper: {e}")
         return []
 
 async def scrape_remoteok():
     try:
         jobs = []
+        search_terms = ["junior-dev", "entry-dev", "junior-data", "junior-security", "ui-ux"]
         
-        # Search for each target role
-        search_terms = ["junior-dev", "entry-dev", "junior-data", "tester", "junior-security", "ui-ux"]
-        
-        for term in search_terms[:3]:  # Limit to avoid too many requests
+        for term in search_terms[:2]:
             try:
                 url = f"https://remoteok.com/remote-{term}-jobs"
                 headers = {
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                    "Accept-Language": "en-US,en;q=0.9",
-                    "Referer": "https://remoteok.com/"
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
                 }
                 response = requests.get(url, headers=headers, timeout=20)
                 soup = BeautifulSoup(response.text, "html.parser")
@@ -232,135 +265,28 @@ async def scrape_remoteok():
                         if a_tag:
                             link = "https://remoteok.com" + a_tag['href']
                             title_tag = tr.find('h2', itemprop='title')
+                            date_tag = tr.find('td', class_='time')
+                            
                             if title_tag:
                                 job_title = title_tag.get_text(strip=True)
-                                # Only add if relevant to our target roles
-                                if is_target_job(job_title):
-                                    jobs.append((job_title, link))
-                    except Exception as job_error:
+                                post_date = date_tag.get_text(strip=True) if date_tag else "Recent"
+                                
+                                if is_target_job(job_title) and is_recent_job(post_date):
+                                    jobs.append((job_title, link, post_date))
+                    except Exception:
                         continue
                 
-                # Add a delay between requests
                 await asyncio.sleep(1)
-            except Exception as term_error:
-                logger.error(f"Error scraping RemoteOK for term {term}: {term_error}")
+            except Exception as e:
+                logger.error(f"Error scraping RemoteOK: {e}")
                 continue
                 
-        logger.info(f"Scraped {len(jobs)} entry-level jobs from RemoteOK")
-        return jobs
-    except requests.exceptions.Timeout:
-        logger.error("RemoteOK request timed out")
-        return []
-    except Exception as e:
-        logger.error(f"Error scraping RemoteOK: {e}")
-        return []
-
-async def scrape_stackoverflow():
-    try:
-        jobs = []
-        
-        # Search for specific fresher/entry-level job categories
-        search_terms = ["junior developer", "entry level data", "junior tester", 
-                        "entry level security", "junior ui ux"]
-        
-        for term in search_terms[:2]:  # Limit to avoid too many requests
-            try:
-                url = f"https://stackoverflow.com/jobs?q={term.replace(' ', '+')}"
-                headers = {
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-                }
-                response = requests.get(url, headers=headers, timeout=15)
-                soup = BeautifulSoup(response.text, "html.parser")
-                
-                for div in soup.select("div.listResults div.-job"):
-                    title_elem = div.select_one("h2 a")
-                    if title_elem:
-                        title = title_elem.get_text(strip=True)
-                        link = f"https://stackoverflow.com{title_elem['href']}"
-                        # Only add if it's a target job
-                        if is_target_job(title):
-                            jobs.append((title, link))
-                
-                # Add delay between requests
-                await asyncio.sleep(1)
-            except Exception as term_error:
-                logger.error(f"Error scraping StackOverflow for term {term}: {term_error}")
-                continue
-                
-        logger.info(f"Scraped {len(jobs)} fresher jobs from StackOverflow")
         return jobs
     except Exception as e:
-        logger.error(f"Error scraping StackOverflow: {e}")
+        logger.error(f"Error in RemoteOK scraper: {e}")
         return []
 
-# New function to scrape fresher-specific job sites
-async def scrape_fresher_job_sites():
-    try:
-        jobs = []
-        
-        # Internshala (popular for freshers in some regions)
-        try:
-            internshala_roles = ["web-development", "data-science", "ui-ux-design", "cyber-security"]
-            for role in internshala_roles[:2]:  # Limit to 2 roles to avoid too many requests
-                url = f"https://internshala.com/internships/{role}/"
-                headers = {
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-                }
-                response = requests.get(url, headers=headers, timeout=15)
-                soup = BeautifulSoup(response.text, "html.parser")
-                
-                containers = soup.select(".internship_meta")
-                for container in containers:
-                    title_elem = container.select_one("a.view_detail_button")
-                    if title_elem:
-                        company_elem = container.select_one(".company_name")
-                        company = company_elem.get_text(strip=True) if company_elem else "Company"
-                        title = f"{title_elem.get_text(strip=True)} at {company}"
-                        link = "https://internshala.com" + title_elem.get('href', '')
-                        jobs.append((title, link))
-                
-                await asyncio.sleep(1)  # Delay between requests
-        except Exception as e:
-            logger.error(f"Error scraping Internshala: {e}")
-            
-        # Freshersworld (specialized in fresher jobs)
-        try:
-            fresher_roles = ["software-developer", "data-analyst", "software-tester", 
-                             "cyber-security", "ui-designer"]
-            for role in fresher_roles[:2]:  # Limit to 2 roles
-                url = f"https://www.freshersworld.com/jobs/search?job={role}"
-                headers = {
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-                }
-                response = requests.get(url, headers=headers, timeout=15)
-                soup = BeautifulSoup(response.text, "html.parser")
-                
-                job_listings = soup.select(".job-container")
-                for job in job_listings:
-                    title_elem = job.select_one(".job-title")
-                    company_elem = job.select_one(".job-company")
-                    link_elem = job.select_one("a")
-                    
-                    if title_elem and link_elem:
-                        company = company_elem.get_text(strip=True) if company_elem else "Company"
-                        title = f"{title_elem.get_text(strip=True)} - {company}"
-                        link = link_elem.get('href', '')
-                        if not link.startswith('http'):
-                            link = "https://www.freshersworld.com" + link
-                        jobs.append((title, link))
-                
-                await asyncio.sleep(1)  # Delay between requests
-        except Exception as e:
-            logger.error(f"Error scraping FreshersWorld: {e}")
-            
-        logger.info(f"Scraped {len(jobs)} jobs from fresher-specific job sites")
-        return jobs
-    except Exception as e:
-        logger.error(f"Error in scrape_fresher_job_sites: {e}")
-        return []
-
-# Function to update job sources every minute (one source per minute)
-# This prevents hitting all sources at once and getting rate-limited
+# Function to update job sources every minute (rotating through sources)
 async def check_job_source(source_name):
     logger.info(f"Checking job source: {source_name}")
     jobs = []
@@ -371,20 +297,16 @@ async def check_job_source(source_name):
         jobs = await scrape_linkedin()
     elif source_name == "remoteok":
         jobs = await scrape_remoteok()
-    elif source_name == "stackoverflow":
-        jobs = await scrape_stackoverflow()
-    elif source_name == "fresher_sites":
-        jobs = await scrape_fresher_job_sites()
     elif source_name == "google":
         if GOOGLE_API_KEY and GOOGLE_CSE_ID:
             jobs = search_google_jobs()
             
     if jobs:
         await send_jobs_to_users(jobs)
-        
+
+# Create a rotation of job sources to check
 def rotate_job_sources():
-    # List of sources to check one at a time
-    sources = ["indeed", "linkedin", "remoteok", "stackoverflow", "fresher_sites", "google"]
+    sources = ["indeed", "linkedin", "remoteok", "google"]
     current_index = 0
     
     def get_next_source():
@@ -402,28 +324,31 @@ async def send_jobs_to_users(jobs):
             
         bot = Bot(BOT_TOKEN)
         
-        # Filter to only include target roles and new jobs
+        # Filter for recent, relevant and new jobs
         new_jobs = []
-        for job_title, link in jobs:
+        for job_data in jobs:
+            job_title, link = job_data[0], job_data[1]
+            post_date = job_data[2] if len(job_data) > 2 else "Recent"
+            
             if is_target_job(job_title):
                 unique_id = f"{job_title}_{link}"
                 if unique_id not in sent_jobs:
                     sent_jobs.add(unique_id)
-                    # Clean job title of any special characters that might break Markdown
+                    # Clean job title of any special characters for Markdown
                     job_title = job_title.replace("*", "").replace("_", "").replace("`", "").replace("[", "").replace("]", "")
-                    new_jobs.append((job_title, link))
+                    new_jobs.append((job_title, link, post_date))
         
         if not new_jobs:
             return
             
-        logger.info(f"Found {len(new_jobs)} new jobs to send to {len(subscribed_users)} users")
+        logger.info(f"Found {len(new_jobs)} new recent jobs to send to {len(subscribed_users)} users")
         
         # Send each new job to all subscribed users
-        for user_id in list(subscribed_users):  # Create a copy of the list to safely modify during iteration
+        for user_id in list(subscribed_users):
             try:
                 jobs_sent = 0
-                for job_title, link in new_jobs:
-                    message = f"💼 *{job_title}*\n🔗 [Apply Here]({link})\n⏰ Posted: {datetime.now().strftime('%Y-%m-%d')}"
+                for job_title, link, post_date in new_jobs:
+                    message = f"💼 *{job_title}*\n🔗 [Apply Here]({link})\n⏰ Posted: {post_date}"
                     try:
                         await bot.send_message(
                             chat_id=user_id,
@@ -432,11 +357,10 @@ async def send_jobs_to_users(jobs):
                             disable_web_page_preview=False
                         )
                         jobs_sent += 1
-                        # Small delay to avoid flooding
                         await asyncio.sleep(0.3)
                     except Exception as e:
-                        if "blocked" in str(e).lower() or "not found" in str(e).lower() or "chat not found" in str(e).lower():
-                            logger.warning(f"User {user_id} has blocked the bot or deleted their account, removing from subscribers")
+                        if "blocked" in str(e).lower() or "not found" in str(e).lower():
+                            logger.warning(f"User {user_id} has blocked the bot or deleted account, removing")
                             subscribed_users.discard(user_id)
                             save_users()
                         else:
@@ -444,13 +368,13 @@ async def send_jobs_to_users(jobs):
                 
                 if jobs_sent > 0:
                     logger.info(f"Sent {jobs_sent} new jobs to user {user_id}")
-            except Exception as user_error:
-                logger.error(f"Error processing user {user_id}: {user_error}")
+            except Exception as e:
+                logger.error(f"Error processing user {user_id}: {e}")
                 
     except Exception as e:
         logger.error(f"Error in send_jobs_to_users: {e}")
 
-def start_scheduler(app):
+def start_scheduler():
     global scheduler
     
     if scheduler:
@@ -459,18 +383,27 @@ def start_scheduler(app):
     scheduler = BackgroundScheduler()
     get_next_source = rotate_job_sources()
 
-    # Function that runs every minute to check one job source at a time
+    # Function that runs every minute to check one job source
     def check_next_source():
         source = get_next_source()
         asyncio.create_task(check_job_source(source))
 
     # Run every minute
     scheduler.add_job(check_next_source, 'interval', minutes=1)
+    
+    # Limit the number of jobs we keep in memory (to prevent memory leaks)
+    def cleanup_job_cache():
+        global sent_jobs
+        if len(sent_jobs) > 1000:
+            # Keep only the most recent 500 jobs
+            sent_jobs = set(list(sent_jobs)[-500:])
+    
+    scheduler.add_job(cleanup_job_cache, 'interval', hours=12)
+    
     scheduler.start()
     logger.info("Scheduler started - checking one job source every minute...")
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Subscribe a user when they use the /start command."""
     user_id = update.effective_chat.id
     
     if user_id not in subscribed_users:
@@ -478,18 +411,13 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         save_users()
         await update.message.reply_text(
             'Welcome to the Entry-Level IT Job Alert Bot! 🚀\n\n'
-            'You will now receive entry-level IT job updates for developers, data analysts, testers, '
-            'cybersecurity, and UI/UX designer roles every minute.\n\n'
+            'You will now receive recent entry-level IT job updates every minute.\n\n'
             'Type /help to see all available commands.'
         )
     else:
-        await update.message.reply_text(
-            'You are already subscribed to job alerts! 📝\n'
-            'You will continue to receive entry-level IT job updates every minute.'
-        )
+        await update.message.reply_text('You are already subscribed to job alerts! 📝')
 
 async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Unsubscribe a user when they use the /stop command."""
     user_id = update.effective_chat.id
     
     if user_id in subscribed_users:
@@ -500,7 +428,6 @@ async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text('You are not currently subscribed to job alerts.')
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Send help information when /help command is issued."""
     help_text = """
 *Entry-Level IT Job Alert Bot - Commands*
 
@@ -508,72 +435,17 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /stop - Unsubscribe from job alerts
 /help - Show this help message
 /jobs - Check for new jobs now
-/status - Check bot status and subscription info
-/roles - Show job roles we're tracking
+/status - Check bot status
 
-The bot automatically checks for new entry-level IT jobs every minute and sends them directly to you.
-
-We focus on fresher/entry-level roles in:
-• Software Development
-• Data Analysis
-• QA Testing
-• Cybersecurity
-• UI/UX Design
-
-Job sources include: Indeed, LinkedIn, RemoteOK, StackOverflow, Google Jobs, Internshala, and FreshersWorld.
+The bot automatically checks for recent entry-level IT jobs every minute from global sources. We focus on the past week's job postings for freshers and entry-level roles.
     """
     await update.message.reply_text(help_text, parse_mode='Markdown')
 
-async def roles_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show the job roles that the bot is tracking."""
-    roles_text = """
-*Job Roles We're Tracking:*
-
-*👨‍💻 Developer Roles:*
-• Junior Developer
-• Entry-level Developer
-• Fresher Developer
-• Graduate Developer
-• Web Developer (Frontend/Backend)
-
-*📊 Data Roles:*
-• Junior Data Analyst
-• Entry-level Data Analyst
-• Business Analyst
-• Junior Data Scientist
-
-*🧪 Testing Roles:*
-• Software Tester
-• QA Engineer
-• Test Engineer
-• Junior QA
-
-*🔒 Security Roles:*
-• Junior Security Analyst
-• Entry-level Cybersecurity
-• Information Security
-
-*🎨 Design Roles:*
-• UI Designer
-• UX Designer
-• UI/UX Designer
-• Junior Product Designer
-
-All roles are focused on fresher, entry-level, junior, graduate, and trainee positions.
-    """
-    await update.message.reply_text(roles_text, parse_mode='Markdown')
-
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Check the status of the bot and user subscription."""
     user_id = update.effective_chat.id
     
     subscription_status = "🟢 Subscribed" if user_id in subscribed_users else "🔴 Not subscribed"
-    
-    if scheduler and scheduler.running:
-        bot_status = "🟢 Bot is running"
-    else:
-        bot_status = "🔴 Bot is not running"
-        
+    bot_status = "🟢 Bot is running" if scheduler and scheduler.running else "🔴 Bot is not running"
     total_subscribers = len(subscribed_users)
     
     stats = f"""
@@ -582,54 +454,52 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 {subscription_status} to job alerts
 Total subscribers: {total_subscribers}
 Jobs in memory: {len(sent_jobs)}
-Update frequency: Every minute (one source at a time)
-Focus: Entry-level IT jobs (Developers, Data, Testing, Security, UI/UX)
+Update frequency: Every minute
+Focus: Recent entry-level IT jobs (past week)
     """
     await update.message.reply_text(stats, parse_mode='Markdown')
 
 async def force_job_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Force a job check when /jobs command is issued."""
     user_id = update.effective_chat.id
     
     if user_id not in subscribed_users:
         await update.message.reply_text('You need to subscribe first. Use /start to subscribe to job alerts.')
         return
         
-    await update.message.reply_text('Checking for fresh entry-level IT jobs...')
+    await update.message.reply_text('Checking for recent entry-level IT jobs...')
     
-    # Perform a special check for just this user
     try:
         bot = Bot(BOT_TOKEN)
         
-        # Collect jobs from all sources (using await for async functions)
+        # Collect recent jobs from all sources
         all_jobs = []
         all_jobs.extend(await scrape_indeed())
         all_jobs.extend(await scrape_linkedin())
         all_jobs.extend(await scrape_remoteok())
-        all_jobs.extend(await scrape_stackoverflow())
-        all_jobs.extend(await scrape_fresher_job_sites())
         
         # Add Google jobs if API credentials are available
         if GOOGLE_API_KEY and GOOGLE_CSE_ID:
             all_jobs.extend(search_google_jobs())
         
-        # Filter for target roles only
-        filtered_jobs = [(title, link) for title, link in all_jobs if is_target_job(title)]
-        
-        # Get all relevant jobs, not just 10
-        jobs_to_send = filtered_jobs
-        
-        # Send all filtered jobs to this specific user
-        jobs_sent = 0
-        
-        for job_title, link in jobs_to_send:
-            # Add to global sent jobs to avoid duplicates later
-            unique_id = f"{job_title}_{link}"
-            sent_jobs.add(unique_id)
+        # Filter for target roles and recent jobs
+        filtered_jobs = []
+        for job_data in all_jobs:
+            title, link = job_data[0], job_data[1]
+            post_date = job_data[2] if len(job_data) > 2 else "Recent"
             
-            # Clean job title of any special characters that might break Markdown
-            job_title = job_title.replace("*", "").replace("_", "").replace("`", "").replace("[", "").replace("]", "")
-            message = f"💼 *{job_title}*\n🔗 [Apply Here]({link})\n⏰ Posted: {datetime.now().strftime('%Y-%m-%d')}"
+            if is_target_job(title) and is_recent_job(post_date):
+                # Add to global sent jobs to avoid duplicates
+                unique_id = f"{title}_{link}"
+                sent_jobs.add(unique_id)
+                
+                # Clean job title for Markdown
+                title = title.replace("*", "").replace("_", "").replace("`", "").replace("[", "").replace("]", "")
+                filtered_jobs.append((title, link, post_date))
+        
+        # Send jobs to this specific user
+        jobs_sent = 0
+        for job_title, link, post_date in filtered_jobs:
+            message = f"💼 *{job_title}*\n🔗 [Apply Here]({link})\n⏰ Posted: {post_date}"
             
             try:
                 await bot.send_message(
@@ -639,7 +509,6 @@ async def force_job_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     disable_web_page_preview=False
                 )
                 jobs_sent += 1
-                # Small delay to avoid flooding
                 await asyncio.sleep(0.3)
             except Exception as e:
                 logger.error(f"Error sending job to user {user_id}: {e}")
@@ -651,7 +520,7 @@ async def force_job_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
     except Exception as e:
         logger.error(f"Error in force job check: {e}")
-        await update.message.reply_text(f'Error checking for jobs: {str(e)}')
+        await update.message.reply_text('Error checking for jobs. Please try again later.')
 
 async def main():
     # Load subscribed users from file
@@ -666,24 +535,21 @@ async def main():
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("jobs", force_job_check))
     app.add_handler(CommandHandler("status", status_command))
-    app.add_handler(CommandHandler("roles", roles_command))
     
     # Start the scheduler
-    start_scheduler(app)
+    start_scheduler()
     
     # Run the bot
     logger.info(f"Bot started and polling with {len(subscribed_users)} subscribed users")
     await app.run_polling()
 
 if __name__ == "__main__":
-    logger.info("Entry-Level IT Jobs Bot is starting...")
+    logger.info("Recent Entry-Level IT Jobs Bot is starting...")
     try:
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
         logger.info("Bot is shutting down...")
-        # Save users before shutting down
         save_users()
     except Exception as e:
         logger.critical(f"Fatal error: {e}")
-        # Save users even on crash
         save_users()
