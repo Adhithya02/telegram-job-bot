@@ -1,6 +1,6 @@
-python-telegram-bot==20.3
-requests
-beautifulsoup4
-apscheduler
-nest_asyncio
-google-api-python-client
+python-telegram-bot==20.8
+requests==2.31.0
+beautifulsoup4==4.12.2
+apscheduler==3.10.4
+nest-asyncio==1.6.0
+google-api-python-client==2.116.0
