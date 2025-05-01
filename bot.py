@@ -423,7 +423,7 @@ async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user_id in subscribed_users:
         subscribed_users.discard(user_id)
         save_users()
-        await update.message.reply_text('You have been unsubscribed from job alerts. Goodbye! 👋')
+        await update.message.reply_text('Varta mame durrrrr👋')
     else:
         await update.message.reply_text('You are not currently subscribed to job alerts.')
 
@@ -466,7 +466,7 @@ async def force_job_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text('You need to subscribe first. Use /start to subscribe to job alerts.')
         return
         
-    await update.message.reply_text('Checking for recent entry-level IT jobs...')
+    await update.message.reply_text('Wait panu mame search panran🕵️')
     
     try:
         bot = Bot(BOT_TOKEN)
@@ -514,7 +514,7 @@ async def force_job_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 logger.error(f"Error sending job to user {user_id}: {e}")
         
         if jobs_sent > 0:
-            await update.message.reply_text(f'Sent you {jobs_sent} recent entry-level IT job listings!')
+            await update.message.reply_text(f'Search pana matum podhadhu, Apply pananum😁')
         else:
             await update.message.reply_text('No new entry-level IT jobs found at the moment. Check back later!')
             
