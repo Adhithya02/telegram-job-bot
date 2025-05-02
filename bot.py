@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 import json
 from googleapiclient.discovery import build
 import re
+import time
 
 # Configure logging
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
@@ -23,6 +24,8 @@ nest_asyncio.apply()
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 GOOGLE_CSE_ID = os.getenv("GOOGLE_CSE_ID")
+LINKEDIN_USERNAME = os.getenv("LINKEDIN_USERNAME")
+LINKEDIN_PASSWORD = os.getenv("LINKEDIN_PASSWORD")
 
 # File to store user data
 USERS_FILE = "users.json"
@@ -40,7 +43,8 @@ TARGET_ROLES = [
     "cybersecurity", "security analyst", "information security", "cyber security",
     "ui designer", "ux designer", "ui/ux designer", "ui ux", "product designer",
     "junior developer", "graduate developer", "entry level developer",
-    "fresher", "entry level", "junior", "graduate", "trainee"
+    "fresher", "entry level", "junior", "graduate", "trainee", "hiring", "openings",
+    "recruitment", "we are hiring", "job opening", "opportunity"
 ]
 
 # Load subscribed users from file
@@ -119,7 +123,6 @@ def search_google_jobs():
             return []
             
         service = build("customsearch", "v1", developerKey=GOOGLE_API_KEY)
-        current_date = datetime.now()
         jobs = []
         
         # Focus on very recent jobs
@@ -245,6 +248,73 @@ async def scrape_linkedin():
         logger.error(f"Error in LinkedIn scraper: {e}")
         return []
 
+async def scrape_linkedin_posts():
+    """Scrape LinkedIn company posts for job announcements"""
+    try:
+        jobs = []
+        search_terms = [
+            "hiring freshers", "hiring graduates", "job openings", 
+            "career opportunity", "we are hiring"
+        ]
+        
+        for term in search_terms[:2]:  # Limit to avoid rate limiting
+            try:
+                # Search for company posts mentioning hiring
+                url = f"https://www.linkedin.com/search/results/content/?keywords={term}&origin=GLOBAL_SEARCH_HEADER&sortBy=date_posted"
+                headers = {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    "Accept-Language": "en-US,en;q=0.9",
+                    "Referer": "https://www.linkedin.com/"
+                }
+                
+                response = requests.get(url, headers=headers, timeout=20)
+                soup = BeautifulSoup(response.text, "html.parser")
+                
+                # Look for feed posts
+                post_cards = soup.select("div.feed-shared-update-v2") or soup.select("li.reusable-search__result-container")
+                
+                for card in post_cards:
+                    try:
+                        # Extract post content
+                        content_elem = card.select_one("div.feed-shared-text") or card.select_one("div.feed-shared-update-v2__description")
+                        title_elem = card.select_one("span.feed-shared-actor__title") or card.select_one("span.update-components-actor__title")
+                        
+                        if not content_elem:
+                            continue
+                            
+                        content = content_elem.get_text(strip=True)
+                        company = title_elem.get_text(strip=True) if title_elem else "Company"
+                        
+                        # Check if content mentions job opportunities
+                        if any(keyword.lower() in content.lower() for keyword in TARGET_ROLES):
+                            # Find post link
+                            link_elem = card.select_one("a.app-aware-link") or card.select_one("a.feed-shared-actor__container-link")
+                            if link_elem and link_elem.has_attr('href'):
+                                post_link = link_elem.get('href', '').split('?')[0]
+                                
+                                # Clean and truncate content for title
+                                job_title = f"{company}: {content[:50]}..." if len(content) > 50 else f"{company}: {content}"
+                                
+                                # Get date if available
+                                date_elem = card.select_one("span.feed-shared-actor__sub-description") or card.select_one("time")
+                                post_date = date_elem.get_text(strip=True) if date_elem else "Recent"
+                                
+                                if post_link and is_recent_job(post_date):
+                                    jobs.append((job_title, post_link, post_date))
+                    except Exception as e:
+                        logger.error(f"Error processing LinkedIn post: {e}")
+                        continue
+                
+                await asyncio.sleep(2)  # Be nice to LinkedIn
+            except Exception as e:
+                logger.error(f"Error scraping LinkedIn posts: {e}")
+                continue
+                
+        return jobs
+    except Exception as e:
+        logger.error(f"Error in LinkedIn posts scraper: {e}")
+        return []
+
 async def scrape_remoteok():
     try:
         jobs = []
@@ -293,8 +363,10 @@ async def check_job_source(source_name):
     
     if source_name == "indeed":
         jobs = await scrape_indeed()
-    elif source_name == "linkedin":
+    elif source_name == "linkedin_jobs":
         jobs = await scrape_linkedin()
+    elif source_name == "linkedin_posts":
+        jobs = await scrape_linkedin_posts()
     elif source_name == "remoteok":
         jobs = await scrape_remoteok()
     elif source_name == "google":
@@ -306,7 +378,7 @@ async def check_job_source(source_name):
 
 # Create a rotation of job sources to check
 def rotate_job_sources():
-    sources = ["indeed", "linkedin", "remoteok", "google"]
+    sources = ["indeed", "linkedin_jobs", "linkedin_posts", "remoteok", "google"]
     current_index = 0
     
     def get_next_source():
@@ -330,13 +402,13 @@ async def send_jobs_to_users(jobs):
             job_title, link = job_data[0], job_data[1]
             post_date = job_data[2] if len(job_data) > 2 else "Recent"
             
-            if is_target_job(job_title):
-                unique_id = f"{job_title}_{link}"
-                if unique_id not in sent_jobs:
-                    sent_jobs.add(unique_id)
-                    # Clean job title of any special characters for Markdown
-                    job_title = job_title.replace("*", "").replace("_", "").replace("`", "").replace("[", "").replace("]", "")
-                    new_jobs.append((job_title, link, post_date))
+            # Check if we've seen this job before
+            unique_id = f"{job_title}_{link}"
+            if unique_id not in sent_jobs:
+                sent_jobs.add(unique_id)
+                # Clean job title of any special characters for Markdown
+                job_title = job_title.replace("*", "").replace("_", "").replace("`", "").replace("[", "").replace("]", "")
+                new_jobs.append((job_title, link, post_date))
         
         if not new_jobs:
             return
@@ -475,26 +547,26 @@ async def force_job_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
         all_jobs = []
         all_jobs.extend(await scrape_indeed())
         all_jobs.extend(await scrape_linkedin())
+        all_jobs.extend(await scrape_linkedin_posts())  # Include LinkedIn posts!
         all_jobs.extend(await scrape_remoteok())
         
         # Add Google jobs if API credentials are available
         if GOOGLE_API_KEY and GOOGLE_CSE_ID:
             all_jobs.extend(search_google_jobs())
         
-        # Filter for target roles and recent jobs
+        # Filter for relevant jobs
         filtered_jobs = []
         for job_data in all_jobs:
             title, link = job_data[0], job_data[1]
             post_date = job_data[2] if len(job_data) > 2 else "Recent"
             
-            if is_target_job(title) and is_recent_job(post_date):
-                # Add to global sent jobs to avoid duplicates
-                unique_id = f"{title}_{link}"
-                sent_jobs.add(unique_id)
-                
-                # Clean job title for Markdown
-                title = title.replace("*", "").replace("_", "").replace("`", "").replace("[", "").replace("]", "")
-                filtered_jobs.append((title, link, post_date))
+            # Add to global sent jobs to avoid duplicates
+            unique_id = f"{title}_{link}"
+            sent_jobs.add(unique_id)
+            
+            # Clean job title for Markdown
+            title = title.replace("*", "").replace("_", "").replace("`", "").replace("[", "").replace("]", "")
+            filtered_jobs.append((title, link, post_date))
         
         # Send jobs to this specific user
         jobs_sent = 0
